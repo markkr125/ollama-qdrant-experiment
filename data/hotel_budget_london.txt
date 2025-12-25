@@ -1,0 +1,14 @@
+Category: hotel
+Location: London
+Date: 2025-02-10
+Tags: budget-friendly, central, clean, wifi
+Price: 95.00
+Rating: 3.9
+Status: open
+Coordinates: 51.5074, -0.1278
+
+The Cozy Inn London provides affordable accommodation in Zone 2, just minutes from the Underground. Perfect for budget-conscious travelers who want to explore the city without breaking the bank. Rooms are compact but well-maintained, featuring comfortable beds, private bathrooms, and complimentary high-speed WiFi.
+
+The hotel offers a simple continental breakfast with tea, coffee, toast, and cereals. Staff members are friendly and knowledgeable about local attractions, always ready to provide directions or recommendations for affordable dining options nearby.
+
+While amenities are basic, the location is excellent for accessing major tourist sites like the British Museum, Tower of London, and West End theaters. The neighborhood is safe and well-connected, with several bus routes and tube stations within walking distance.

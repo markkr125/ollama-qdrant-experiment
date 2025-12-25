@@ -1,0 +1,14 @@
+Category: restaurant
+Location: San Francisco
+Date: 2025-01-08
+Tags: vegan, organic, sustainable, casual, healthy
+Price: 35.00
+Rating: 4.4
+Status: open
+Coordinates: 37.7749, -122.4194
+
+Green Leaf Kitchen champions plant-based dining with innovative dishes that convert even dedicated carnivores. Located in the Mission District, this casual eatery sources ingredients exclusively from local organic farms, with a menu that changes seasonally to highlight the freshest produce available.
+
+Signature dishes include the jackfruit "pulled pork" sandwich, cashew cheese pizza, and impossible burger that genuinely tastes like beef. The restaurant's commitment to sustainability extends beyond the menu, with compostable packaging, solar panels on the roof, and a zero-waste policy.
+
+The bright, airy space features reclaimed wood furniture, living plant walls, and communal tables that encourage conversation among diners. Smoothies and fresh-pressed juices complement the food menu, with add-ons like spirulina, maca powder, and hemp seeds available. Popular with fitness enthusiasts, families, and anyone seeking nutritious, delicious meals.

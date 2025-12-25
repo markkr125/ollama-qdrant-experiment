@@ -1,0 +1,14 @@
+Category: restaurant
+Location: Boston
+Date: 2024-11-22
+Tags: seafood, fresh, waterfront, casual, family-friendly
+Price: 55.00
+Rating: 4.5
+Status: open
+Coordinates: 42.3601, -71.0589
+
+Harborside Catch serves the freshest seafood in Boston, with boats docking directly at the restaurant's pier each morning. The menu features New England classics like clam chowder, lobster rolls, and oysters on the half shell, alongside creative preparations of striped bass, scallops, and Atlantic salmon.
+
+The waterfront location offers stunning harbor views, with outdoor seating available during warmer months. Inside, the nautical-themed décor includes ship wheels, vintage fishing nets, and photographs documenting Boston's maritime history. It's equally suitable for casual family dinners and special celebrations.
+
+Daily specials depend on the catch, with staff explaining preparation methods and sourcing details. The raw bar is particularly popular during happy hour, when oysters and clams are half price. Children's menu includes fish and chips, popcorn shrimp, and non-seafood options for picky eaters.

@@ -1,0 +1,14 @@
+Category: hotel
+Location: Paris
+Date: 2025-01-15
+Tags: luxury, spa, fine-dining, romantic, city-center
+Price: 450.00
+Rating: 4.8
+Status: open
+Coordinates: 48.8566, 2.3522
+
+The Grand Hotel Lumière stands as a beacon of elegance in the heart of Paris. This five-star establishment offers unparalleled luxury with its marble-floored lobby, crystal chandeliers, and panoramic views of the Eiffel Tower from premium suites. Guests enjoy complimentary access to the rooftop spa featuring heated pools, Finnish saunas, and therapeutic massage services.
+
+The hotel's Michelin-starred restaurant serves exquisite French cuisine prepared by renowned Chef Marcel Dubois. Each morning, guests awaken to a gourmet breakfast buffet featuring fresh pastries, artisanal cheeses, and organic produce sourced from local markets.
+
+Concierge services include private tours of the Louvre, yacht rentals on the Seine, and exclusive shopping appointments at haute couture boutiques. The hotel's commitment to personalized service ensures every guest feels like royalty during their Parisian escape.
