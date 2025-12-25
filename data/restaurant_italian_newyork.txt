@@ -1,0 +1,14 @@
+Category: restaurant
+Location: New York
+Date: 2024-12-05
+Tags: italian, fine-dining, romantic, wine-cellar, authentic
+Price: 85.00
+Rating: 4.7
+Status: open
+Coordinates: 40.7128, -74.0060
+
+Trattoria Bella Vita brings authentic Italian cuisine to Manhattan's Upper East Side. Chef Giovanni Rossi, trained in Bologna and Florence, crafts traditional dishes using imported ingredients and family recipes passed down through generations. The homemade pasta is extraordinary, with favorites including carbonara, cacio e pepe, and tagliatelle al ragù.
+
+The restaurant's warm, intimate atmosphere features exposed brick walls, soft candlelight, and live acoustic music on weekends. An extensive wine list showcases over 200 Italian vintages, carefully selected to complement the menu. The sommelier provides expert pairing recommendations for each course.
+
+Reservations are essential, especially for the coveted window tables overlooking Central Park. Service is impeccable yet unpretentious, with staff who genuinely care about creating memorable dining experiences. The tiramisu alone is worth the visit, made fresh daily with imported mascarpone and espresso.

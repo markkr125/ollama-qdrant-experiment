@@ -1,0 +1,36 @@
+{
+  "name": "ollama-qdrant-experiment",
+  "version": "1.0.0",
+  "description": "Advanced Qdrant vector database experiment with Ollama embeddings - featuring hybrid search, complex filtering, and geo-queries",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "embed": "node index.js embed",
+    "search": "node index.js search",
+    "hybrid": "node index.js hybrid",
+    "demo": "node index.js demo",
+    "examples": "node examples.js",
+    "mixed": "node mixed_examples.js"
+  },
+  "keywords": [
+    "qdrant",
+    "vector-database",
+    "ollama",
+    "embeddings",
+    "semantic-search",
+    "hybrid-search",
+    "machine-learning",
+    "AI"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@qdrant/js-client-rest": "^1.8.2",
+    "axios": "^1.6.5",
+    "dotenv": "^17.2.3",
+    "glob": "^10.3.10"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

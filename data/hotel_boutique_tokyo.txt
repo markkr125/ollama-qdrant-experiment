@@ -1,0 +1,14 @@
+Category: hotel
+Location: Tokyo
+Date: 2025-03-20
+Tags: boutique, modern, design, technology, urban
+Price: 280.00
+Rating: 4.6
+Status: open
+Coordinates: 35.6762, 139.6503
+
+Zen Garden Hotel Tokyo seamlessly blends traditional Japanese aesthetics with cutting-edge technology. Located in the vibrant Shibuya district, this boutique hotel features minimalist rooms with tatami-inspired flooring, smart automation systems, and floor-to-ceiling windows overlooking the neon-lit cityscape.
+
+Each room includes a high-tech control panel for adjusting lighting, temperature, and privacy glass, alongside traditional shoji screens for authentic Japanese ambiance. The on-site restaurant serves fusion cuisine combining Japanese and international flavors, with a sake bar offering over 50 premium selections.
+
+Guests appreciate the hotel's attention to detail, from the automated check-in kiosks to the complimentary smartphone provided for navigation and translation. The rooftop garden provides a peaceful retreat from the bustling streets below, featuring meditation spaces and stunning views of Mount Fuji on clear days.

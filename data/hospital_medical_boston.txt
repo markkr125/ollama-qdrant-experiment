@@ -1,0 +1,22 @@
+Category: hospital
+Location: Boston
+Date: 2025-04-01
+Tags: medical, research, cancer-treatment, cardiology, emergency, pediatrics
+Price: 0.00
+Rating: 4.8
+Status: open
+Coordinates: 42.3601, -71.0589
+
+Massachusetts General Hospital stands as one of America's premier academic medical centers, consistently ranked among the top three hospitals nationwide. The 999-bed teaching facility affiliated with Harvard Medical School treats over 1.5 million patients annually across every medical specialty.
+
+The cancer center offers cutting-edge treatments including CAR T-cell therapy, proton beam radiation, and access to over 500 clinical trials for novel immunotherapies and targeted medications. Multidisciplinary tumor boards bring together oncologists, surgeons, radiologists, and pathologists to design personalized treatment plans.
+
+The cardiology department pioneered minimally invasive heart valve repairs, robotic cardiac surgery, and advanced heart failure management. The transplant program performs over 200 procedures yearly including heart, lung, kidney, liver, and pancreas transplants with five-year survival rates exceeding national averages.
+
+Emergency services feature a Level 1 trauma center with helicopter pad receiving critical cases from across New England. The burn unit treats the most severe cases using synthetic skin grafts and hyperbaric oxygen therapy. The stroke center provides 24/7 neurosurgery and clot-busting medications within the critical golden hour.
+
+Pediatric services include a dedicated children's hospital with child life specialists, family-centered rooms, and specialized care for rare genetic disorders. The neonatal intensive care unit manages premature babies as young as 23 weeks with survival rates among the world's highest.
+
+Research laboratories focus on gene therapy, regenerative medicine, neuroscience, and infectious diseases. Scientists collaborate with MIT engineers on medical devices, AI diagnostic tools, and next-generation prosthetics.
+
+The hospital accepts all major insurance plans and provides financial assistance programs for uninsured patients. International services assist patients traveling from abroad with visa letters, accommodation arrangements, and interpreter services in 45 languages.
