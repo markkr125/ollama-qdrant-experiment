@@ -60,12 +60,34 @@ Each document includes structured metadata:
 ## 📋 Prerequisites
 
 - **Node.js** (v16 or higher)
-- **Qdrant** vector database (running at `http://192.168.50.87:6333`)
+- **Docker** and **Docker Compose** (for running Qdrant locally)
 - **Ollama** with an embedding model installed
 
 ## 🚀 Quick Start
 
-### 1. Install Ollama and Embedding Model
+### 1. Start Qdrant Vector Database
+
+Run Qdrant locally using Docker Compose:
+
+```bash
+# Start Qdrant container
+docker-compose -f qdrant-docker-compose.yml up -d
+
+# Verify it's running
+curl http://localhost:6333/collections
+```
+
+Qdrant will be available at:
+- REST API & Dashboard: `http://localhost:6333`
+- gRPC: `localhost:6334`
+- Storage: `./qdrant_storage` (persistent)
+
+To stop Qdrant:
+```bash
+docker-compose -f qdrant-docker-compose.yml down
+```
+
+### 2. Install Ollama and Embedding Model
 
 ```bash
 # Install Ollama (see https://ollama.ai)
@@ -78,7 +100,7 @@ ollama pull embeddinggemma:latest
 # or: ollama pull bge-large
 ```
 
-### 2. Setup Project
+### 3. Setup Project
 
 ```bash
 # Install dependencies
@@ -88,11 +110,11 @@ npm install
 cp .env.example .env
 
 # Edit .env to match your setup
-# Default Ollama: http://localhost:11434/api/embed
-# Qdrant: http://192.168.50.87:6333
+# Update Qdrant URL to http://localhost:6333 if running locally
+# Update Ollama URL if needed (default: http://localhost:11434/api/embed)
 ```
 
-### 3. Embed Documents
+### 4. Embed Documents
 
 ```bash
 npm run embed
@@ -105,7 +127,7 @@ This will:
 - Generate both semantic embeddings and keyword-based sparse vectors
 - Store documents with rich metadata
 
-### 4. Run Searches
+### 5. Run Searches
 
 **Semantic Search** (dense vectors only):
 ```bash
@@ -543,10 +565,6 @@ ollama-qdrant-experiment/
 ## 📄 License
 
 MIT
-
-## 🤝 Contributing
-
-Feel free to open issues or submit pull requests with improvements!
 
 ---
 
