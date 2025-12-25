@@ -46,7 +46,8 @@ Each document includes structured metadata:
 curl -fsSL https://ollama.ai/install.sh | sh
 
 # Pull an embedding model
-ollama pull nomic-embed-text
+ollama pull embeddinggemma:latest
+# or: ollama pull nomic-embed-text
 # or: ollama pull mxbai-embed-large
 # or: ollama pull bge-large
 ```
