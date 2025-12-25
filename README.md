@@ -2,6 +2,32 @@
 
 Advanced vector database experiment demonstrating **Qdrant's powerful features** with Ollama embeddings. This project showcases hybrid search, complex payload filtering, geo-queries, and multi-stage search capabilities.
 
+## 📑 Table of Contents
+
+- [Key Features Demonstrated](#-key-features-demonstrated)
+- [Prerequisites](#-prerequisites)
+- [Quick Start](#-quick-start)
+- [Basic Usage](#-basic-usage)
+- [Usage Examples](#-usage-examples)
+- [Advanced Search Examples](#-advanced-search-examples)
+- [Dataset Structure](#-dataset-structure)
+- [Configuration](#-configuration)
+- [Architecture](#-architecture)
+- [Learning Resources](#-learning-resources)
+- [Example Output](#-example-output)
+- [Customization](#-customization)
+- [Troubleshooting](#-troubleshooting)
+- [Project Structure](#-project-structure)
+- [Next Steps](#-next-steps)
+
+## 📚 Additional Documentation
+
+- **[Quick Reference](docs/QUICK_REFERENCE.md)** - Fast command reference and key features
+- **[Complete Summary](docs/SUMMARY.md)** - Comprehensive project overview
+- **[Mixed Dataset Guide](docs/MIXED_DATASET.md)** - Handling structured + unstructured documents
+- **[Location Search Examples](docs/LOCATION_SEARCH_EXAMPLES.md)** - City and geo-radius queries
+- **[Advanced Queries](docs/ADVANCED_QUERIES.md)** - Complex filtering patterns
+
 ## 🌟 Key Features Demonstrated
 
 ### 1. **Native Hybrid Search**
@@ -483,10 +509,13 @@ ollama-qdrant-experiment/
 ├── .env                              # Configuration (gitignored)
 ├── .env.example                      # Template configuration
 ├── .gitignore                        # Git ignore rules
-├── README.md                         # This file
-├── LOCATION_SEARCH_EXAMPLES.md       # Location search guide
-├── ADVANCED_QUERIES.md               # Complete query reference
-├── QUICK_REFERENCE.md                # Quick command reference
+├── README.md                         # This file (you are here)
+├── docs/                             # Additional documentation
+│   ├── SUMMARY.md                    # Complete project overview
+│   ├── QUICK_REFERENCE.md            # Fast command reference
+│   ├── MIXED_DATASET.md              # Mixed dataset handling guide
+│   ├── LOCATION_SEARCH_EXAMPLES.md   # Location/geo query examples
+│   └── ADVANCED_QUERIES.md           # Complex filtering patterns
 └── data/                             # Document corpus (27 files)
     ├── hotel_*.txt                   # Structured hotels (4)
     ├── restaurant_*.txt              # Structured restaurants (4)
