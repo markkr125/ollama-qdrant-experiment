@@ -2,6 +2,28 @@
 
 Modern web interface for the Ollama-Qdrant vector search experiment.
 
+## Screenshots
+
+### Main Search Interface
+
+![Search Interface](../docs/screenshots/webui-search.png)
+
+The main interface features:
+- Multiple search types (Semantic, Hybrid, Location, Geo-radius)
+- Advanced filtering options
+- Real-time results with score indicators
+- Document count and category statistics
+
+### Add Document Modal
+
+![Add Document](../docs/screenshots/webui-add-document.png)
+
+Upload new documents directly from the browser:
+- Support for structured and unstructured documents
+- Optional metadata fields
+- Real-time word/character count
+- Instant embedding and indexing
+
 ## Features
 
 - **Multiple Search Types**
