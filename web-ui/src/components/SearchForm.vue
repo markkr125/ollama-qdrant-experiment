@@ -185,30 +185,40 @@
       >
     </div>
 
-    <!-- Submit Button -->
-    <button 
-      @click="handleSubmit"
-      :disabled="!canSubmit || loading"
-      class="btn btn-primary"
-      style="width: 100%;"
-    >
-      <span v-if="loading" class="loading"></span>
-      <span v-else>🔍 Search</span>
-    </button>
+    <!-- Action Buttons -->
+    <div class="action-buttons">
+      <button 
+        @click="handleClear"
+        :disabled="loading"
+        class="btn btn-secondary"
+        style="flex: 1;"
+      >
+        ✖ Clear
+      </button>
+      <button 
+        @click="handleSubmit"
+        :disabled="!canSubmit || loading"
+        class="btn btn-primary"
+        style="flex: 2;"
+      >
+        <span v-if="loading" class="loading"></span>
+        <span v-else>🔍 Search</span>
+      </button>
+    </div>
 
     <p class="hint">Press Ctrl+Enter to search</p>
   </div>
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 const props = defineProps({
   loading: Boolean,
   stats: Object
 })
 
-const emit = defineEmits(['search'])
+const emit = defineEmits(['search', 'clear'])
 
 // Form state
 const searchType = ref('hybrid')
@@ -219,6 +229,7 @@ const latitude = ref(null)
 const longitude = ref(null)
 const radius = ref(50000)
 const limit = ref(10)
+const currentPage = ref(1)
 const showFilters = ref(false)
 
 // Filters
@@ -288,13 +299,19 @@ const buildFilters = () => {
 }
 
 // Submit handler
-const handleSubmit = () => {
+const handleSubmit = (resetPage = true) => {
   if (!canSubmit.value || props.loading) return
+  
+  // Reset to page 1 when user clicks search button
+  if (resetPage) {
+    currentPage.value = 1
+  }
   
   const searchParams = {
     query: query.value.trim(),
     searchType: searchType.value,
-    limit: limit.value
+    limit: limit.value,
+    page: currentPage.value
   }
   
   if (searchType.value === 'hybrid') {
@@ -320,7 +337,152 @@ const handleSubmit = () => {
   }
   
   emit('search', searchParams)
+  updateURL(searchParams)
 }
+
+// Clear search
+const handleClear = () => {
+  query.value = ''
+  searchType.value = 'hybrid'
+  denseWeight.value = 0.7
+  location.value = ''
+  latitude.value = null
+  longitude.value = null
+  radius.value = 50000
+  limit.value = 10
+  currentPage.value = 1
+  filters.value = {
+    category: '',
+    minPrice: null,
+    maxPrice: null,
+    minRating: null,
+    tags: '',
+    documentType: ''
+  }
+  
+  // Clear URL
+  window.history.pushState({}, '', window.location.pathname)
+  
+  emit('clear')
+}
+
+// Pagination handlers
+const goToPage = (page) => {
+  currentPage.value = page
+  handleSubmit(false) // Don't reset page
+}
+
+const nextPage = () => {
+  currentPage.value++
+  handleSubmit(false) // Don't reset page
+}
+
+const prevPage = () => {
+  if (currentPage.value > 1) {
+    currentPage.value--
+    handleSubmit(false) // Don't reset page
+  }
+}
+
+// Update URL with search parameters
+const updateURL = (searchParams) => {
+  const params = new URLSearchParams()
+  
+  params.set('q', searchParams.query)
+  params.set('type', searchParams.searchType)
+  params.set('limit', searchParams.limit)
+  params.set('page', searchParams.page)
+  
+  if (searchParams.denseWeight !== undefined) {
+    params.set('weight', searchParams.denseWeight)
+  }
+  
+  if (searchParams.location) {
+    params.set('location', searchParams.location)
+  }
+  
+  if (searchParams.latitude !== undefined && searchParams.latitude !== null) {
+    params.set('lat', searchParams.latitude)
+  }
+  
+  if (searchParams.longitude !== undefined && searchParams.longitude !== null) {
+    params.set('lon', searchParams.longitude)
+  }
+  
+  if (searchParams.radius) {
+    params.set('radius', searchParams.radius)
+  }
+  
+  // Add filters
+  if (filters.value.category) params.set('cat', filters.value.category)
+  if (filters.value.minPrice !== null) params.set('minPrice', filters.value.minPrice)
+  if (filters.value.maxPrice !== null) params.set('maxPrice', filters.value.maxPrice)
+  if (filters.value.minRating !== null) params.set('minRating', filters.value.minRating)
+  if (filters.value.tags) params.set('tags', filters.value.tags)
+  if (filters.value.documentType) params.set('docType', filters.value.documentType)
+  
+  window.history.pushState({}, '', '?' + params.toString())
+}
+
+// Load search parameters from URL on mount
+const loadFromURL = () => {
+  const params = new URLSearchParams(window.location.search)
+  
+  if (params.has('q')) query.value = params.get('q')
+  if (params.has('type')) searchType.value = params.get('type')
+  if (params.has('limit')) limit.value = parseInt(params.get('limit'))
+  if (params.has('weight')) denseWeight.value = parseFloat(params.get('weight'))
+  if (params.has('location')) location.value = params.get('location')
+  if (params.has('lat')) latitude.value = parseFloat(params.get('lat'))
+  if (params.has('lon')) longitude.value = parseFloat(params.get('lon'))
+  if (params.has('radius')) radius.value = parseInt(params.get('radius'))
+  
+  // Load filters
+  if (params.has('cat')) {
+    filters.value.category = params.get('cat')
+    showFilters.value = true
+  }
+  if (params.has('minPrice')) {
+    filters.value.minPrice = parseFloat(params.get('minPrice'))
+    showFilters.value = true
+  }
+  if (params.has('maxPrice')) {
+    filters.value.maxPrice = parseFloat(params.get('maxPrice'))
+    showFilters.value = true
+  }
+  if (params.has('minRating')) {
+    filters.value.minRating = parseFloat(params.get('minRating'))
+    showFilters.value = true
+  }
+  if (params.has('tags')) {
+    filters.value.tags = params.get('tags')
+    showFilters.value = true
+  }
+  if (params.has('docType')) {
+    filters.value.documentType = params.get('docType')
+    showFilters.value = true
+  }
+  if (params.has('page')) {
+    currentPage.value = parseInt(params.get('page'))
+  }
+  
+  // If URL has query, auto-search
+  if (params.has('q') && query.value.trim()) {
+    handleSubmit()
+  }
+}
+
+onMounted(() => {
+  loadFromURL()
+})
+
+// Expose pagination methods to parent
+defineExpose({
+  goToPage,
+  nextPage,
+  prevPage,
+  currentPage
+})
 
 // Reset filters when search type changes
 watch(searchType, () => {
@@ -329,6 +491,8 @@ watch(searchType, () => {
     latitude.value = null
     longitude.value = null
   }
+  // Reset to page 1 when changing search type
+  currentPage.value = 1
 })
 </script>
 
@@ -437,4 +601,8 @@ watch(searchType, () => {
   font-size: 0.85rem;
   margin-top: 0.75rem;
 }
-</style>
+.action-buttons {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}</style>

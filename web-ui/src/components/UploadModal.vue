@@ -111,6 +111,22 @@ Or just plain text for unstructured documents."
             </div>
           </div>
 
+          <!-- Auto-categorization (always visible for file uploads) -->
+          <div v-if="uploadMethod === 'file'" class="form-group auto-categorize-group">
+            <label class="checkbox-label" :class="{ disabled: !categorizationEnabled }">
+              <input 
+                type="checkbox"
+                v-model="autoCategorize"
+                :disabled="!categorizationEnabled"
+              >
+              <span class="checkbox-text">
+                🤖 Auto-categorize using AI
+                <span v-if="!categorizationEnabled" class="disabled-hint">(disabled - set CATEGORIZATION_MODEL in .env)</span>
+              </span>
+            </label>
+            <span v-if="categorizationEnabled" class="hint">Automatically extract category, location, tags, price, and more using Ollama</span>
+          </div>
+
           <!-- Optional Metadata -->
           <div class="metadata-section">
             <button 
@@ -257,6 +273,8 @@ const uploadMethod = ref('file')
 const selectedFiles = ref([])
 const fileInput = ref(null)
 const maxFileSizeMB = ref(10) // Default value
+const categorizationEnabled = ref(false)
+const autoCategorize = ref(false)
 
 const document = ref({
   filename: '',
@@ -298,9 +316,14 @@ const fetchConfig = async () => {
   try {
     const response = await api.get('/config')
     maxFileSizeMB.value = response.data.maxFileSizeMB
+    categorizationEnabled.value = response.data.categorizationEnabled
+    // Default to checked if enabled
+    if (categorizationEnabled.value) {
+      autoCategorize.value = true
+    }
   } catch (error) {
     console.error('Failed to fetch config:', error)
-    // Keep default value of 10MB
+    // Keep default values
   }
 }
 
@@ -377,6 +400,11 @@ const handleSubmit = async () => {
           formData.append('file', file)
           // Base64 encode the filename to prevent encoding issues with Hebrew/Arabic/etc
           formData.append('filename_encoded', btoa(unescape(encodeURIComponent(file.name))))
+
+          // Add auto-categorization flag
+          if (categorizationEnabled.value && autoCategorize.value) {
+            formData.append('auto_categorize', 'true')
+          }
 
           if (Object.keys(metadata).length > 0) {
             formData.append('metadata', JSON.stringify(metadata))
@@ -728,5 +756,53 @@ const handleSubmit = async () => {
 .remove-file-btn:hover {
   background: rgba(239, 68, 68, 0.1);
   color: var(--error);
+}
+
+.auto-categorize-group {
+  padding: 1rem;
+  background: rgba(79, 70, 229, 0.05);
+  border-radius: 8px;
+  border: 1px solid rgba(79, 70, 229, 0.1);
+  margin-bottom: 1rem;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox-label.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.checkbox-label input[type="checkbox"] {
+  margin-top: 0.2rem;
+  cursor: pointer;
+}
+
+.checkbox-label.disabled input[type="checkbox"] {
+  cursor: not-allowed;
+}
+
+.checkbox-text {
+  flex: 1;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.disabled-hint {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-top: 0.25rem;
+}
+
+.auto-categorize-group .hint {
+  margin-left: 1.75rem;
+  margin-top: 0.5rem;
 }
 </style>

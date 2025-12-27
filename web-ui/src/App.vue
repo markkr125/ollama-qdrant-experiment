@@ -30,7 +30,9 @@
           <!-- Search Section -->
           <div class="search-section">
             <SearchForm
+              ref="searchFormRef"
               @search="handleSearch"
+              @clear="handleClear"
               :loading="loading"
               :stats="stats"
             />
@@ -43,6 +45,10 @@
               :loading="loading"
               :query="currentQuery"
               :searchType="searchType"
+              :currentPage="searchFormRef?.currentPage || 1"
+              :totalResults="totalResults"
+              :limit="searchFormRef?.limit || 10"
+              @page-change="handlePageChange"
             />
           </div>
         </div>
@@ -73,10 +79,12 @@ import UploadModal from './components/UploadModal.vue'
 
 const loading = ref(false)
 const results = ref([])
+const totalResults = ref(0)
 const currentQuery = ref('')
 const searchType = ref('')
 const stats = ref(null)
 const showUploadModal = ref(false)
+const searchFormRef = ref(null)
 
 // Load stats on mount
 onMounted(async () => {
@@ -98,11 +106,15 @@ const handleSearch = async (searchParams) => {
   try {
     let response
     
+    // Calculate offset from page and limit
+    const offset = ((searchParams.page || 1) - 1) * searchParams.limit
+    
     switch (searchParams.searchType) {
       case 'semantic':
         response = await api.post('/search/semantic', {
           query: searchParams.query,
           limit: searchParams.limit,
+          offset: offset,
           filters: searchParams.filters
         })
         break
@@ -111,6 +123,7 @@ const handleSearch = async (searchParams) => {
         response = await api.post('/search/hybrid', {
           query: searchParams.query,
           limit: searchParams.limit,
+          offset: offset,
           denseWeight: searchParams.denseWeight,
           filters: searchParams.filters
         })
@@ -120,7 +133,8 @@ const handleSearch = async (searchParams) => {
         response = await api.post('/search/location', {
           query: searchParams.query,
           location: searchParams.location,
-          limit: searchParams.limit
+          limit: searchParams.limit,
+          offset: offset
         })
         break
       
@@ -130,17 +144,34 @@ const handleSearch = async (searchParams) => {
           latitude: searchParams.latitude,
           longitude: searchParams.longitude,
           radius: searchParams.radius,
-          limit: searchParams.limit
+          limit: searchParams.limit,
+          offset: offset
         })
         break
     }
     
     results.value = response.data.results || []
+    totalResults.value = response.data.total || results.value.length
   } catch (error) {
     console.error('Search error:', error)
     alert('Search failed: ' + (error.response?.data?.error || error.message))
   } finally {
     loading.value = false
+  }
+}
+
+// Handle clear
+const handleClear = () => {
+  results.value = []
+  totalResults.value = 0
+  currentQuery.value = ''
+  searchType.value = ''
+}
+
+// Handle page change
+const handlePageChange = (page) => {
+  if (searchFormRef.value) {
+    searchFormRef.value.goToPage(page)
   }
 }
 

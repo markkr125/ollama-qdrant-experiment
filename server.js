@@ -52,6 +52,7 @@ const MODEL = process.env.MODEL;
 const QDRANT_URL = process.env.QDRANT_URL;
 const COLLECTION_NAME = process.env.COLLECTION_NAME || 'documents';
 const MAX_FILE_SIZE_MB = parseInt(process.env.MAX_FILE_SIZE_MB || '10', 10);
+const CATEGORIZATION_MODEL = process.env.CATEGORIZATION_MODEL || '';
 
 // Configure multer for file uploads
 const upload = multer({ 
@@ -128,6 +129,89 @@ function simpleHash(str) {
 }
 
 /**
+ * Automatically categorize document using Ollama chat (single request)
+ */
+async function categorizeDocument(content) {
+  if (!CATEGORIZATION_MODEL) {
+    return {};
+  }
+
+  console.log('Starting automatic categorization...');
+  
+  // Truncate content if too long (first 3000 chars for context)
+  const textSample = content.substring(0, 3000);
+  
+  const systemPrompt = `You are a data extraction assistant.
+From the text below, produce only a JSON object that follows this exact schema:
+{
+  "category": "single main category/subject of the text",
+  "country": "country name",
+  "city": "city name",
+  "coordinates": [latitude, longitude],
+  "date": "most relevant date in ISO-8601 format (YYYY-MM-DD)",
+  "tags": ["array", "of", "lowercase", "tags"],
+  "price": 0,
+  "currency": "3-letter currency code (e.g., USD, EUR)",
+  "short_description": "a few words describing what's in this text"
+}
+
+Requirements:
+- Output ONLY the JSON object, no explanations or additional text
+- If a field cannot be determined, use empty values: "" for strings, [] for arrays, 0 for numbers
+- Do not round prices; keep the exact numeric value present in the text
+- Tags should be lowercase with no punctuation or special characters
+- Coordinates should be [latitude, longitude] or empty array [] if not found
+- Keep all keys exactly as shown above`;
+
+  try {
+    const ollamaChatUrl = OLLAMA_URL.replace('/api/embed', '/api/chat');
+    
+    const headers = {
+      'Content-Type': 'application/json'
+    };
+    if (AUTH_TOKEN) {
+      headers['Authorization'] = `Bearer ${AUTH_TOKEN}`;
+    }
+
+    const response = await axios.post(ollamaChatUrl, {
+      model: CATEGORIZATION_MODEL,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: textSample }
+      ],
+      stream: false
+    }, { headers });
+
+    const result = response.data.message.content.trim();
+    
+    // Parse JSON response
+    const jsonMatch = result.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      
+      // Clean up empty values
+      Object.keys(parsed).forEach(key => {
+        if (parsed[key] === null || 
+            parsed[key] === '' || 
+            (Array.isArray(parsed[key]) && parsed[key].length === 0) ||
+            parsed[key] === 0) {
+          delete parsed[key];
+        }
+      });
+      
+      console.log('Categorization complete:', parsed);
+      return parsed;
+    }
+    
+    console.warn('Could not parse JSON from categorization response');
+    return {};
+  } catch (error) {
+    console.error('Error during categorization:', error.message);
+    return {};
+  }
+}
+
+/**
  * Convert PDF to HTML then to Markdown using pdf.js
  */
 async function pdfToMarkdownViaHtml(buffer) {
@@ -164,8 +248,12 @@ async function pdfToMarkdownViaHtml(buffer) {
       // Sort rows by Y position (top to bottom)
       const sortedRows = Array.from(rows.entries()).sort((a, b) => b[0] - a[0]);
       
+      // Detect table regions
+      let currentTable = [];
+      let inTable = false;
+      
       // Process each row
-      sortedRows.forEach(([y, items]) => {
+      sortedRows.forEach(([y, items], idx) => {
         // Sort items by X position (left to right)
         items.sort((a, b) => a.x - b.x);
         
@@ -175,15 +263,28 @@ async function pdfToMarkdownViaHtml(buffer) {
           gaps.push(items[i].x - (items[i-1].x + items[i-1].width));
         }
         const hasLargeGaps = gaps.some(g => g > 20); // Significant spacing
+        const isTableRow = items.length >= 3 && hasLargeGaps;
         
-        if (items.length >= 3 && hasLargeGaps) {
-          // Likely a table row
-          htmlContent += '<table><tr>\n';
-          items.forEach(item => {
-            htmlContent += `<td>${item.text}</td>`;
-          });
-          htmlContent += '</tr></table>\n';
+        if (isTableRow) {
+          // Add to current table
+          currentTable.push(items);
+          inTable = true;
         } else {
+          // If we were building a table, close it
+          if (inTable && currentTable.length > 0) {
+            htmlContent += '<table>\n';
+            currentTable.forEach(rowItems => {
+              htmlContent += '<tr>\n';
+              rowItems.forEach(item => {
+                htmlContent += `<td>${item.text}</td>`;
+              });
+              htmlContent += '</tr>\n';
+            });
+            htmlContent += '</table>\n';
+            currentTable = [];
+            inTable = false;
+          }
+          
           // Regular text
           const text = items.map(i => i.text).join(' ');
           
@@ -197,6 +298,19 @@ async function pdfToMarkdownViaHtml(buffer) {
           }
         }
       });
+      
+      // Close any remaining table
+      if (inTable && currentTable.length > 0) {
+        htmlContent += '<table>\n';
+        currentTable.forEach(rowItems => {
+          htmlContent += '<tr>\n';
+          rowItems.forEach(item => {
+            htmlContent += `<td>${item.text}</td>`;
+          });
+          htmlContent += '</tr>\n';
+        });
+        htmlContent += '</table>\n';
+      }
       
       if (pageNum < pdf.numPages) {
         htmlContent += '<hr/>\n'; // Page separator
@@ -344,7 +458,8 @@ function formatTable(rows) {
  */
 app.get('/api/config', (req, res) => {
   res.json({
-    maxFileSizeMB: MAX_FILE_SIZE_MB
+    maxFileSizeMB: MAX_FILE_SIZE_MB,
+    categorizationEnabled: !!CATEGORIZATION_MODEL
   });
 });
 
@@ -400,7 +515,7 @@ app.get('/api/collection/:name/info', async (req, res) => {
  */
 app.post('/api/search/semantic', async (req, res) => {
   try {
-    const { query, limit = 10, filters } = req.body;
+    const { query, limit = 10, offset = 0, filters } = req.body;
     
     if (!query) {
       return res.status(400).json({ error: 'Query is required' });
@@ -414,6 +529,7 @@ app.post('/api/search/semantic', async (req, res) => {
         vector: queryEmbedding
       },
       limit: parseInt(limit),
+      offset: parseInt(offset),
       with_payload: true
     };
     
@@ -423,9 +539,14 @@ app.post('/api/search/semantic', async (req, res) => {
     
     const results = await qdrantClient.search(COLLECTION_NAME, searchParams);
     
+    // Get total count (estimate based on collection size)
+    const collectionInfo = await qdrantClient.getCollection(COLLECTION_NAME);
+    const totalEstimate = collectionInfo.points_count;
+    
     res.json({
       query,
       searchType: 'semantic',
+      total: totalEstimate,
       results: results.map(r => ({
         id: r.id,
         score: r.score,
@@ -444,7 +565,7 @@ app.post('/api/search/semantic', async (req, res) => {
  */
 app.post('/api/search/hybrid', async (req, res) => {
   try {
-    const { query, limit = 10, denseWeight = 0.7, filters } = req.body;
+    const { query, limit = 10, offset = 0, denseWeight = 0.7, filters } = req.body;
     
     if (!query) {
       return res.status(400).json({ error: 'Query is required' });
@@ -463,6 +584,7 @@ app.post('/api/search/hybrid', async (req, res) => {
         vector: sparseVector
       },
       limit: parseInt(limit),
+      offset: parseInt(offset),
       with_payload: true
     };
     
@@ -472,10 +594,15 @@ app.post('/api/search/hybrid', async (req, res) => {
     
     const results = await qdrantClient.search(COLLECTION_NAME, searchParams);
     
+    // Get total count (estimate based on collection size)
+    const collectionInfo = await qdrantClient.getCollection(COLLECTION_NAME);
+    const totalEstimate = collectionInfo.points_count;
+    
     res.json({
       query,
       searchType: 'hybrid',
       denseWeight,
+      total: totalEstimate,
       results: results.map(r => ({
         id: r.id,
         score: r.score,
@@ -494,7 +621,7 @@ app.post('/api/search/hybrid', async (req, res) => {
  */
 app.post('/api/search/location', async (req, res) => {
   try {
-    const { query, location, limit = 10 } = req.body;
+    const { query, location, limit = 10, offset = 0 } = req.body;
     
     if (!query || !location) {
       return res.status(400).json({ error: 'Query and location are required' });
@@ -513,6 +640,7 @@ app.post('/api/search/location', async (req, res) => {
         ]
       },
       limit: parseInt(limit),
+      offset: parseInt(offset),
       with_payload: true
     });
     
@@ -520,6 +648,7 @@ app.post('/api/search/location', async (req, res) => {
       query,
       location,
       searchType: 'location',
+      total: results.length, // Use actual results length for filtered searches
       results: results.map(r => ({
         id: r.id,
         score: r.score,
@@ -538,7 +667,7 @@ app.post('/api/search/location', async (req, res) => {
  */
 app.post('/api/search/geo', async (req, res) => {
   try {
-    const { query, latitude, longitude, radius, limit = 10 } = req.body;
+    const { query, latitude, longitude, radius, limit = 10, offset = 0 } = req.body;
     
     if (!query || latitude === undefined || longitude === undefined || !radius) {
       return res.status(400).json({ 
@@ -568,6 +697,7 @@ app.post('/api/search/geo', async (req, res) => {
         ]
       },
       limit: parseInt(limit),
+      offset: parseInt(offset),
       with_payload: true
     });
     
@@ -576,6 +706,7 @@ app.post('/api/search/geo', async (req, res) => {
       center: { latitude, longitude },
       radius,
       searchType: 'geo',
+      total: results.length, // Use actual results length for filtered searches
       results: results.map(r => ({
         id: r.id,
         score: r.score,
@@ -775,6 +906,14 @@ app.post('/api/documents/upload', upload.single('file'), async (req, res) => {
       }
     }
 
+    // Automatic categorization if enabled and requested
+    if (CATEGORIZATION_MODEL && req.body.auto_categorize === 'true') {
+      console.log('Automatic categorization requested...');
+      const extracted = await categorizeDocument(content);
+      metadata = { ...metadata, ...extracted };
+      console.log('Extracted metadata:', extracted);
+    }
+
     // Parse metadata from content if it's structured
     const parsedMetadata = parseMetadataFromContent(filename, content, metadata);
     parsedMetadata.file_type = fileExt;
@@ -905,6 +1044,11 @@ function parseMetadataFromContent(filename, content, providedMetadata) {
   
   // Merge provided metadata
   Object.assign(metadata, providedMetadata);
+  
+  // Check if category was already provided (e.g., from auto-categorization)
+  if (providedMetadata.category) {
+    metadata.has_structured_metadata = true;
+  }
   
   // Try to extract structured metadata from content
   const categoryMatch = content.match(/^Category:\s*(.+)/im);
