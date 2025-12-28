@@ -421,6 +421,17 @@ const updateURL = (searchParams) => {
   if (filters.value.tags) params.set('tags', filters.value.tags)
   if (filters.value.documentType) params.set('docType', filters.value.documentType)
   
+  // Preserve facet filters from URL (set by FacetBar)
+  const currentUrl = new URLSearchParams(window.location.search)
+  if (currentUrl.has('filters')) {
+    params.set('filters', currentUrl.get('filters'))
+  }
+  
+  // Preserve similarTo parameter (set by Find Similar)
+  if (currentUrl.has('similarTo')) {
+    params.set('similarTo', currentUrl.get('similarTo'))
+  }
+  
   window.history.pushState({}, '', '?' + params.toString())
 }
 
@@ -466,8 +477,8 @@ const loadFromURL = () => {
     currentPage.value = parseInt(params.get('page'))
   }
   
-  // If URL has query, auto-search
-  if (params.has('q') && query.value.trim()) {
+  // If URL has query, auto-search (but skip if similarTo is present, as App.vue handles that)
+  if (params.has('q') && query.value.trim() && !params.has('similarTo')) {
     handleSubmit()
   }
 }
@@ -499,7 +510,7 @@ watch(searchType, () => {
 <style scoped>
 .search-form {
   position: sticky;
-  top: 2rem;
+  top: 6rem;
 }
 
 .form-title {

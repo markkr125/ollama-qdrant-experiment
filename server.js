@@ -129,6 +129,24 @@ function simpleHash(str) {
 }
 
 /**
+ * Count total documents matching a filter
+ */
+async function countFilteredDocuments(filters) {
+  if (!filters) {
+    const collectionInfo = await qdrantClient.getCollection(COLLECTION_NAME);
+    return collectionInfo.points_count;
+  }
+  
+  // Use count API with filter
+  const countResult = await qdrantClient.count(COLLECTION_NAME, {
+    filter: filters,
+    exact: true
+  });
+  
+  return countResult.count;
+}
+
+/**
  * Automatically categorize document using Ollama chat (single request)
  */
 async function categorizeDocument(content) {
@@ -517,41 +535,64 @@ app.post('/api/search/semantic', async (req, res) => {
   try {
     const { query, limit = 10, offset = 0, filters } = req.body;
     
-    if (!query) {
-      return res.status(400).json({ error: 'Query is required' });
-    }
+    let results;
+    let totalEstimate;
     
-    const queryEmbedding = await getDenseEmbedding(query);
-    
-    const searchParams = {
-      vector: {
-        name: 'dense',
-        vector: queryEmbedding
-      },
-      limit: parseInt(limit),
-      offset: parseInt(offset),
-      with_payload: true
-    };
-    
-    if (filters) {
-      searchParams.filter = filters;
-    }
-    
-    const results = await qdrantClient.search(COLLECTION_NAME, searchParams);
-    
-    // Get total count (estimate based on collection size)
-    const collectionInfo = await qdrantClient.getCollection(COLLECTION_NAME);
-    const totalEstimate = collectionInfo.points_count;
-    
-    res.json({
-      query,
-      searchType: 'semantic',
-      total: totalEstimate,
-      results: results.map(r => ({
+    // If no query provided, do a filtered scroll instead of vector search
+    if (!query || query.trim() === '') {
+      const scrollParams = {
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+        with_payload: true
+      };
+      
+      if (filters) {
+        scrollParams.filter = filters;
+      }
+      
+      const scrollResults = await qdrantClient.scroll(COLLECTION_NAME, scrollParams);
+      results = scrollResults.points.map(p => ({
+        id: p.id,
+        score: 1.0, // No relevance score for scroll
+        payload: p.payload
+      }));
+      
+      // Get total count with filter
+      totalEstimate = await countFilteredDocuments(filters);
+    } else {
+      // Normal vector search
+      const queryEmbedding = await getDenseEmbedding(query);
+      
+      const searchParams = {
+        vector: {
+          name: 'dense',
+          vector: queryEmbedding
+        },
+        limit: parseInt(limit),
+        offset: parseInt(offset),
+        with_payload: true
+      };
+      
+      if (filters) {
+        searchParams.filter = filters;
+      }
+      
+      const searchResults = await qdrantClient.search(COLLECTION_NAME, searchParams);
+      results = searchResults.map(r => ({
         id: r.id,
         score: r.score,
         payload: r.payload
-      }))
+      }));
+      
+      // Get total count with filter
+      totalEstimate = await countFilteredDocuments(filters);
+    }
+    
+    res.json({
+      query: query || '(filtered)',
+      searchType: 'semantic',
+      total: totalEstimate,
+      results
     });
   } catch (error) {
     console.error('Semantic search error:', error);
@@ -594,9 +635,8 @@ app.post('/api/search/hybrid', async (req, res) => {
     
     const results = await qdrantClient.search(COLLECTION_NAME, searchParams);
     
-    // Get total count (estimate based on collection size)
-    const collectionInfo = await qdrantClient.getCollection(COLLECTION_NAME);
-    const totalEstimate = collectionInfo.points_count;
+    // Get total count with filter
+    const totalEstimate = await countFilteredDocuments(filters);
     
     res.json({
       query,
@@ -754,6 +794,217 @@ app.get('/api/stats', async (req, res) => {
     });
   } catch (error) {
     console.error('Stats error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/recommend
+ * Find similar documents using Qdrant's recommendation API
+ */
+app.post('/api/recommend', async (req, res) => {
+  try {
+    const { documentId, limit = 10, offset = 0 } = req.body;
+    
+    if (!documentId) {
+      return res.status(400).json({ error: 'Document ID is required' });
+    }
+    
+    // Convert documentId to number if it's a numeric string
+    const pointId = isNaN(documentId) ? documentId : parseInt(documentId, 10);
+    
+    // First, get total count of similar documents (fetch with high limit to count)
+    const allSimilar = await qdrantClient.recommend(COLLECTION_NAME, {
+      positive: [pointId],
+      limit: 100, // Fetch up to 100 similar documents to get accurate count
+      with_payload: false, // Don't need payload for counting
+      with_vector: false,
+      using: 'dense'
+    });
+    
+    const totalSimilar = allSimilar.length;
+    
+    // Now fetch the paginated results with payload
+    const totalToFetch = parseInt(limit) + parseInt(offset);
+    const results = await qdrantClient.recommend(COLLECTION_NAME, {
+      positive: [pointId],
+      limit: totalToFetch,
+      with_payload: true,
+      using: 'dense'
+    });
+    
+    // Slice results to apply offset and limit
+    const offsetNum = parseInt(offset);
+    const limitNum = parseInt(limit);
+    const paginatedResults = results.slice(offsetNum, offsetNum + limitNum);
+    
+    res.json({
+      documentId,
+      searchType: 'recommendation',
+      total: totalSimilar, // Total similar documents available
+      results: paginatedResults.map(r => ({
+        id: r.id,
+        score: r.score,
+        payload: r.payload
+      }))
+    });
+  } catch (error) {
+    console.error('Recommendation error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/random
+ * Get random documents from the collection
+ */
+app.get('/api/random', async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+    
+    // Get collection info to know total count
+    const info = await qdrantClient.getCollection(COLLECTION_NAME);
+    const totalPoints = info.points_count;
+    
+    if (totalPoints === 0) {
+      return res.json({ results: [] });
+    }
+    
+    const requestedLimit = parseInt(limit);
+    
+    // Fetch more results than needed to randomly sample from
+    const fetchLimit = Math.min(totalPoints, requestedLimit * 5); // Fetch 5x to have good randomness
+    const maxOffset = Math.max(0, totalPoints - fetchLimit);
+    const randomOffset = Math.floor(Math.random() * maxOffset);
+    
+    console.log(`Random request: totalPoints=${totalPoints}, requestedLimit=${requestedLimit}, fetchLimit=${fetchLimit}, randomOffset=${randomOffset}`);
+    
+    // Use scroll API with random offset
+    const results = await qdrantClient.scroll(COLLECTION_NAME, {
+      limit: fetchLimit,
+      offset: randomOffset,
+      with_payload: true
+    });
+    
+    // Randomly shuffle and take only the requested amount
+    const shuffled = results.points
+      .map(r => ({ r, sort: Math.random() }))
+      .sort((a, b) => a.sort - b.sort)
+      .map(({ r }) => r)
+      .slice(0, requestedLimit);
+    
+    res.json({
+      searchType: 'random',
+      total: totalPoints,
+      results: shuffled.map(r => ({
+        id: r.id,
+        score: 1.0, // Random results don't have scores
+        payload: r.payload
+      }))
+    });
+  } catch (error) {
+    console.error('Random documents error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/document/:id
+ * Get a specific document by ID
+ */
+app.get('/api/document/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Convert ID to number if it's a numeric string
+    const pointId = isNaN(id) ? id : parseInt(id, 10);
+    
+    // Retrieve the document from Qdrant
+    const points = await qdrantClient.retrieve(COLLECTION_NAME, {
+      ids: [pointId],
+      with_payload: true
+    });
+    
+    if (points.length === 0) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    
+    res.json({
+      id: points[0].id,
+      score: 1.0,
+      payload: points[0].payload
+    });
+  } catch (error) {
+    console.error('Document retrieval error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/facets
+ * Get faceted counts for categories, locations, and tags
+ */
+app.get('/api/facets', async (req, res) => {
+  try {
+    // Scroll through all documents to count facets
+    // For large collections, you might want to limit this or use sampling
+    let offset = null;
+    const categoryCount = {};
+    const locationCount = {};
+    const tagCount = {};
+    let hasMore = true;
+    
+    while (hasMore) {
+      const scrollResult = await qdrantClient.scroll(COLLECTION_NAME, {
+        limit: 100,
+        offset: offset,
+        with_payload: true
+      });
+      
+      scrollResult.points.forEach(point => {
+        // Count categories
+        if (point.payload.category) {
+          categoryCount[point.payload.category] = (categoryCount[point.payload.category] || 0) + 1;
+        }
+        
+        // Count locations
+        if (point.payload.location) {
+          locationCount[point.payload.location] = (locationCount[point.payload.location] || 0) + 1;
+        }
+        
+        // Count tags
+        if (point.payload.tags && Array.isArray(point.payload.tags)) {
+          point.payload.tags.forEach(tag => {
+            tagCount[tag] = (tagCount[tag] || 0) + 1;
+          });
+        }
+      });
+      
+      offset = scrollResult.next_page_offset;
+      hasMore = offset !== null && offset !== undefined;
+    }
+    
+    // Convert to sorted arrays
+    const categories = Object.entries(categoryCount)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+    
+    const locations = Object.entries(locationCount)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+    
+    const tags = Object.entries(tagCount)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 50); // Limit to top 50 tags
+    
+    res.json({
+      categories,
+      locations,
+      tags
+    });
+  } catch (error) {
+    console.error('Facets error:', error);
     res.status(500).json({ error: error.message });
   }
 });

@@ -16,6 +16,9 @@
                 <strong>{{ stats.categories.length }}</strong> categories
               </span>
             </div>
+            <button @click="handleSurpriseMe" class="btn btn-secondary" :disabled="loading">
+              🎲 Surprise Me
+            </button>
             <button @click="showUploadModal = true" class="btn btn-add">
               ➕ Add Document
             </button>
@@ -26,6 +29,16 @@
 
     <main class="main">
       <div class="container">
+        <!-- Facet Bar (Browse by) -->
+        <FacetBar
+          :results="results"
+          :activeFilters="activeFilters"
+          @filter-category="handleFilterCategory"
+          @filter-location="handleFilterLocation"
+          @filter-tag="handleFilterTag"
+          @clear-filter="handleClearFilter"
+        />
+        
         <div class="layout">
           <!-- Search Section -->
           <div class="search-section">
@@ -49,6 +62,8 @@
               :totalResults="totalResults"
               :limit="searchFormRef?.limit || 10"
               @page-change="handlePageChange"
+              @find-similar="handleFindSimilar"
+              @clear-similar="handleClearSimilar"
             />
           </div>
         </div>
@@ -71,8 +86,9 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import api from './api'
+import FacetBar from './components/FacetBar.vue'
 import ResultsList from './components/ResultsList.vue'
 import SearchForm from './components/SearchForm.vue'
 import UploadModal from './components/UploadModal.vue'
@@ -85,8 +101,17 @@ const searchType = ref('')
 const stats = ref(null)
 const showUploadModal = ref(false)
 const searchFormRef = ref(null)
+const activeFilters = ref([]) // Array of { type, value }
+const lastSearchParams = ref(null) // Track last search parameters
+const similarDocumentId = ref(null) // Track current Find Similar source document
 
-// Load stats on mount
+// Computed label for active filters
+const activeFiltersLabel = computed(() => {
+  if (activeFilters.value.length === 0) return null
+  return activeFilters.value.map(f => `${f.value}`).join(', ')
+})
+
+// Load stats on mount and restore filter from URL
 onMounted(async () => {
   try {
     const response = await api.get('/stats')
@@ -94,14 +119,75 @@ onMounted(async () => {
   } catch (error) {
     console.error('Failed to load stats:', error)
   }
+  
+  // Restore from URL
+  const url = new URL(window.location)
+  
+  // Check for similarTo parameter first
+  const similarTo = url.searchParams.get('similarTo')
+  if (similarTo) {
+    await handleFindSimilar(similarTo)
+    return // Exit early, don't process filters
+  }
+  
+  // Restore filters from URL
+  const filtersParam = url.searchParams.get('filters')
+  if (filtersParam) {
+    try {
+      const parsedFilters = JSON.parse(filtersParam)
+      if (Array.isArray(parsedFilters) && parsedFilters.length > 0) {
+        activeFilters.value = parsedFilters
+        
+        // Build filters for search
+        const filters = {
+          must: activeFilters.value.map(f => ({
+            key: f.type === 'tag' ? 'tags' : f.type,
+            match: f.type === 'tag' ? { any: [f.value] } : { value: f.value }
+          }))
+        }
+        
+        // Execute the filtered search
+        currentQuery.value = activeFilters.value.map(f => `${f.type}: ${f.value}`).join(', ')
+        searchType.value = 'facet'
+        const searchParams = {
+          searchType: 'semantic',
+          query: '',
+          limit: 10,
+          page: 1,
+          filters
+        }
+        await handleSearch(searchParams)
+      }
+    } catch (error) {
+      console.error('Failed to parse filters from URL:', error)
+    }
+  }
 })
 
 // Handle search
 const handleSearch = async (searchParams) => {
+  // If we're in Find Similar mode, re-run Find Similar instead of a regular search
+  if (similarDocumentId.value) {
+    await handleFindSimilar(similarDocumentId.value)
+    return
+  }
+  
   loading.value = true
-  currentQuery.value = searchParams.query
+  
+  // Only clear Find Similar mode if there's an actual search query (not just changing settings)
+  if (searchParams.query && searchParams.query.trim()) {
+    const url = new URL(window.location)
+    url.searchParams.delete('similarTo')
+  }
+  
+  // Only update currentQuery if searchParams has a non-empty query
+  if (searchParams.query) {
+    currentQuery.value = searchParams.query
+    // Store search params if it's a real search query (not empty)
+    lastSearchParams.value = { ...searchParams }
+  }
   searchType.value = searchParams.searchType
-  results.value = []
+  // Don't clear results here to prevent "Ready to search" flash
 
   try {
     let response
@@ -150,6 +236,7 @@ const handleSearch = async (searchParams) => {
         break
     }
     
+    // Update results after successful response
     results.value = response.data.results || []
     totalResults.value = response.data.total || results.value.length
   } catch (error) {
@@ -166,12 +253,150 @@ const handleClear = () => {
   totalResults.value = 0
   currentQuery.value = ''
   searchType.value = ''
+  lastSearchParams.value = null
+  activeFilters.value = []
+  similarDocumentId.value = null // Clear Find Similar mode
 }
 
 // Handle page change
-const handlePageChange = (page) => {
+const handlePageChange = async (page) => {
+  // If we're in Find Similar mode, fetch new page with source document
+  if (similarDocumentId.value) {
+    loading.value = true
+    try {
+      // Update the page in SearchForm
+      if (searchFormRef.value) {
+        searchFormRef.value.currentPage = page
+      }
+      
+      // Fetch the source document
+      const sourceResponse = await api.get(`/document/${similarDocumentId.value}`)
+      const sourceDocument = sourceResponse.data
+      
+      // Get limit from SearchForm or URL params
+      let userLimit = searchFormRef.value?.limit
+      if (!userLimit) {
+        const urlParams = new URLSearchParams(window.location.search)
+        userLimit = urlParams.has('limit') ? parseInt(urlParams.get('limit')) : 10
+      }
+      
+      // Calculate offset for pagination (limit - 1 since we'll prepend the source)
+      const similarLimit = userLimit - 1  // Fetch one less to make room for source document
+      const offset = (page - 1) * similarLimit
+      
+      // Fetch similar documents for this page
+      const response = await api.post('/recommend', {
+        documentId: similarDocumentId.value,
+        limit: similarLimit,
+        offset: offset
+      })
+      
+      // Prepend source document to results
+      const similarResults = response.data.results || []
+      results.value = [
+        { ...sourceDocument, isSource: true },
+        ...similarResults
+      ]
+      totalResults.value = response.data.total || similarResults.length
+    } catch (error) {
+      console.error('Page change error:', error)
+    } finally {
+      loading.value = false
+    }
+    return
+  }
+  
   if (searchFormRef.value) {
     searchFormRef.value.goToPage(page)
+  }
+}
+
+// Handle find similar
+const handleFindSimilar = async (documentId) => {
+  loading.value = true
+  currentQuery.value = 'Similar to document #' + documentId
+  searchType.value = 'recommendation'
+  results.value = []
+  similarDocumentId.value = documentId // Track for pagination
+
+  // Update URL with similarTo parameter
+  const url = new URL(window.location)
+  url.searchParams.set('similarTo', documentId)
+  window.history.pushState({}, '', url)
+
+  try {
+    // Fetch the source document first
+    const sourceResponse = await api.get(`/document/${documentId}`)
+    const sourceDocument = sourceResponse.data
+    
+    // Get limit from SearchForm or URL params
+    let userLimit = searchFormRef.value?.limit
+    if (!userLimit) {
+      const urlParams = new URLSearchParams(window.location.search)
+      userLimit = urlParams.has('limit') ? parseInt(urlParams.get('limit')) : 10
+    }
+    
+    // Fetch similar documents (limit - 1 since we'll prepend the source)
+    const response = await api.post('/recommend', {
+      documentId: documentId,
+      limit: userLimit - 1  // Fetch one less to make room for source document
+    })
+    
+    // Prepend source document to results with a special marker
+    const similarResults = response.data.results || []
+    results.value = [
+      { ...sourceDocument, isSource: true },
+      ...similarResults
+    ]
+    totalResults.value = response.data.total || similarResults.length
+  } catch (error) {
+    console.error('Find similar error:', error)
+    alert('Failed to find similar documents: ' + (error.response?.data?.error || error.message))
+  } finally {
+    loading.value = false
+  }
+}
+
+// Handle surprise me
+const handleSurpriseMe = async () => {
+  loading.value = true
+  currentQuery.value = 'Random Discovery'
+  searchType.value = 'random'
+  results.value = []
+
+  try {
+    const response = await api.get('/random', {
+      params: { limit: searchFormRef.value?.limit || 10 }
+    })
+    
+    results.value = response.data.results || []
+    totalResults.value = response.data.total || results.value.length
+  } catch (error) {
+    console.error('Surprise me error:', error)
+    alert('Failed to get random documents: ' + (error.response?.data?.error || error.message))
+  } finally {
+    loading.value = false
+  }
+}
+
+// Handle clear similar
+const handleClearSimilar = async () => {
+  similarDocumentId.value = null
+  
+  // Clear similarTo from URL
+  const url = new URL(window.location)
+  url.searchParams.delete('similarTo')
+  window.history.pushState({}, '', url)
+  
+  // If there was a previous search, restore it
+  if (lastSearchParams.value && lastSearchParams.value.query) {
+    await handleSearch(lastSearchParams.value)
+  } else {
+    // Otherwise clear everything
+    results.value = []
+    totalResults.value = 0
+    currentQuery.value = ''
+    searchType.value = ''
   }
 }
 
@@ -183,6 +408,186 @@ const handleUploadSuccess = async () => {
     stats.value = response.data
   } catch (error) {
     console.error('Failed to reload stats:', error)
+  }
+}
+
+// Handle facet filter - category
+const handleFilterCategory = async (category) => {
+  // Check if this filter already exists
+  const existingIndex = activeFilters.value.findIndex(f => f.type === 'category' && f.value === category)
+  if (existingIndex >= 0) {
+    // Remove if already selected (toggle)
+    activeFilters.value.splice(existingIndex, 1)
+  } else {
+    // Remove any existing category filter and add new one
+    activeFilters.value = activeFilters.value.filter(f => f.type !== 'category')
+    activeFilters.value.push({ type: 'category', value: category })
+  }
+  
+  // Update URL
+  const url = new URL(window.location)
+  url.searchParams.set('filters', JSON.stringify(activeFilters.value))
+  window.history.pushState({}, '', url)
+  
+  // Build filters for search
+  const filters = {
+    must: activeFilters.value.map(f => ({
+      key: f.type === 'tag' ? 'tags' : f.type,
+      match: f.type === 'tag' ? { any: [f.value] } : { value: f.value }
+    }))
+  }
+  
+  // If there's an existing search, add filters to it
+  if (lastSearchParams.value && lastSearchParams.value.query) {
+    const searchParams = {
+      ...lastSearchParams.value,
+      filters: filters.must.length > 0 ? filters : undefined
+    }
+    const filterText = activeFilters.value.length > 0 ? ` (${activeFilters.value.map(f => f.value).join(', ')})` : ''
+    currentQuery.value = `${lastSearchParams.value.query}${filterText}`
+    await handleSearch(searchParams)
+  } else if (activeFilters.value.length > 0) {
+    // No existing search, just filter
+    currentQuery.value = activeFilters.value.map(f => `${f.type}: ${f.value}`).join(', ')
+    searchType.value = 'facet'
+    const searchParams = {
+      searchType: 'semantic',
+      query: '',
+      limit: searchFormRef.value?.limit || 10,
+      page: 1,
+      filters
+    }
+    await handleSearch(searchParams)
+  } else {
+    // No filters and no search, clear results
+    results.value = []
+    totalResults.value = 0
+    currentQuery.value = ''
+    searchType.value = ''
+  }
+}
+
+// Handle facet filter - location
+const handleFilterLocation = async (location) => {
+  // Check if this filter already exists
+  const existingIndex = activeFilters.value.findIndex(f => f.type === 'location' && f.value === location)
+  if (existingIndex >= 0) {
+    activeFilters.value.splice(existingIndex, 1)
+  } else {
+    activeFilters.value = activeFilters.value.filter(f => f.type !== 'location')
+    activeFilters.value.push({ type: 'location', value: location })
+  }
+  
+  const url = new URL(window.location)
+  url.searchParams.set('filters', JSON.stringify(activeFilters.value))
+  window.history.pushState({}, '', url)
+  
+  const filters = {
+    must: activeFilters.value.map(f => ({
+      key: f.type === 'tag' ? 'tags' : f.type,
+      match: f.type === 'tag' ? { any: [f.value] } : { value: f.value }
+    }))
+  }
+  
+  if (lastSearchParams.value && lastSearchParams.value.query) {
+    const searchParams = {
+      ...lastSearchParams.value,
+      filters: filters.must.length > 0 ? filters : undefined
+    }
+    const filterText = activeFilters.value.length > 0 ? ` (${activeFilters.value.map(f => f.value).join(', ')})` : ''
+    currentQuery.value = `${lastSearchParams.value.query}${filterText}`
+    await handleSearch(searchParams)
+  } else if (activeFilters.value.length > 0) {
+    currentQuery.value = activeFilters.value.map(f => `${f.type}: ${f.value}`).join(', ')
+    searchType.value = 'facet'
+    const searchParams = {
+      searchType: 'semantic',
+      query: '',
+      limit: searchFormRef.value?.limit || 10,
+      page: 1,
+      filters
+    }
+    await handleSearch(searchParams)
+  } else {
+    results.value = []
+    totalResults.value = 0
+    currentQuery.value = ''
+    searchType.value = ''
+  }
+}
+
+// Handle facet filter - tag
+const handleFilterTag = async (tag) => {
+  // Check if this filter already exists
+  const existingIndex = activeFilters.value.findIndex(f => f.type === 'tag' && f.value === tag)
+  if (existingIndex >= 0) {
+    activeFilters.value.splice(existingIndex, 1)
+  } else {
+    // Allow multiple tags
+    activeFilters.value.push({ type: 'tag', value: tag })
+  }
+  
+  const url = new URL(window.location)
+  url.searchParams.set('filters', JSON.stringify(activeFilters.value))
+  window.history.pushState({}, '', url)
+  
+  const filters = {
+    must: activeFilters.value.map(f => ({
+      key: f.type === 'tag' ? 'tags' : f.type,
+      match: f.type === 'tag' ? { any: [f.value] } : { value: f.value }
+    }))
+  }
+  
+  if (lastSearchParams.value && lastSearchParams.value.query) {
+    const searchParams = {
+      ...lastSearchParams.value,
+      filters: filters.must.length > 0 ? filters : undefined
+    }
+    const filterText = activeFilters.value.length > 0 ? ` (${activeFilters.value.map(f => f.value).join(', ')})` : ''
+    currentQuery.value = `${lastSearchParams.value.query}${filterText}`
+    await handleSearch(searchParams)
+  } else if (activeFilters.value.length > 0) {
+    currentQuery.value = activeFilters.value.map(f => `${f.type}: ${f.value}`).join(', ')
+    searchType.value = 'facet'
+    const searchParams = {
+      searchType: 'semantic',
+      query: '',
+      limit: searchFormRef.value?.limit || 10,
+      page: 1,
+      filters
+    }
+    await handleSearch(searchParams)
+  } else {
+    results.value = []
+    totalResults.value = 0
+    currentQuery.value = ''
+    searchType.value = ''
+  }
+}
+
+// Handle clear filter
+const handleClearFilter = async () => {
+  activeFilters.value = []
+  
+  // Clear URL params
+  const url = new URL(window.location)
+  url.searchParams.delete('filters')
+  window.history.pushState({}, '', url)
+  
+  // If there was a previous search, re-run it without filters
+  if (lastSearchParams.value && lastSearchParams.value.query) {
+    const searchParamsWithoutFilter = {
+      ...lastSearchParams.value,
+      filters: undefined
+    }
+    currentQuery.value = lastSearchParams.value.query
+    await handleSearch(searchParamsWithoutFilter)
+  } else {
+    // Otherwise, clear everything
+    results.value = []
+    totalResults.value = 0
+    currentQuery.value = ''
+    searchType.value = ''
   }
 }
 </script>

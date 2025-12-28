@@ -12,8 +12,16 @@
         </h2>
         <div class="results-meta">
           <span class="badge badge-primary">{{ searchTypeLabel }}</span>
-          <span class="results-count">{{ results.length }} results</span>
+          <span class="results-count">{{ displayResultsCount }} results out of {{ totalResults }}</span>
           <span class="query-text">"{{ query }}"</span>
+          <button 
+            v-if="searchType === 'recommendation'"
+            @click="emit('clear-similar')"
+            class="clear-similar-btn"
+            title="Clear Find Similar"
+          >
+            ✕ Clear
+          </button>
         </div>
       </div>
       <div v-else class="empty-state">
@@ -29,7 +37,13 @@
         v-for="(result, index) in results" 
         :key="result.id"
         class="result-card card"
+        :class="{ 'source-document': result.isSource }"
       >
+        <!-- Source Document Badge -->
+        <div v-if="result.isSource" class="source-badge">
+          📌 Source Document
+        </div>
+        
         <!-- Score Badge -->
         <div class="result-header">
           <div class="result-rank">#{{ (currentPage - 1) * limit + index + 1 }}</div>
@@ -110,13 +124,22 @@
           <p>{{ truncateContent(result.payload.content, 300) }}</p>
         </div>
 
-        <!-- Expand Button -->
-        <button 
-          @click="toggleExpand(result.id)"
-          class="btn btn-secondary expand-btn"
-        >
-          {{ expandedIds.has(result.id) ? '▲ Show Less' : '▼ Show More' }}
-        </button>
+        <!-- Action Buttons -->
+        <div class="result-actions">
+          <button 
+            @click="$emit('find-similar', result.id)"
+            class="btn btn-secondary"
+            title="Find documents similar to this one"
+          >
+            🔍 Find Similar
+          </button>
+          <button 
+            @click="toggleExpand(result.id)"
+            class="btn btn-secondary"
+          >
+            {{ expandedIds.has(result.id) ? '▲ Show Less' : '▼ Show More' }}
+          </button>
+        </div>
 
         <!-- Full Content (when expanded) -->
         <transition name="fade">
@@ -203,9 +226,15 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['page-change'])
+const emit = defineEmits(['page-change', 'find-similar', 'clear-similar'])
 
 const expandedIds = ref(new Set())
+
+// Count results excluding source document for display
+const displayResultsCount = computed(() => {
+  const hasSourceDoc = props.results.some(r => r.isSource)
+  return hasSourceDoc ? props.results.length - 1 : props.results.length
+})
 
 const totalPages = computed(() => {
   if (!props.totalResults || !props.limit) return 1
@@ -256,7 +285,10 @@ const searchTypeLabel = computed(() => {
     semantic: '🧠 Semantic Search',
     hybrid: '🔀 Hybrid Search',
     location: '📍 Location Search',
-    geo: '🌍 Geo-Radius Search'
+    geo: '🌍 Geo-Radius Search',
+    recommendation: '✨ Similar Documents',
+    random: '🎲 Random Discovery',
+    facet: '📂 Browse by Filter'
   }
   return labels[props.searchType] || 'Search'
 })
@@ -322,6 +354,26 @@ const toggleExpand = (id) => {
   color: var(--text-primary);
 }
 
+.clear-similar-btn {
+  padding: 0.35rem 0.75rem;
+  background: #dc2626;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: all 0.2s;
+  white-space: nowrap;
+  margin-left: 0.5rem;
+}
+
+.clear-similar-btn:hover {
+  background: #b91c1c;
+  transform: translateY(-1px);
+  box-shadow: 0 3px 6px rgba(220, 38, 38, 0.4);
+}
+
 .results-meta {
   display: flex;
   align-items: center;
@@ -368,11 +420,31 @@ const toggleExpand = (id) => {
 
 .result-card {
   transition: all 0.3s;
+  position: relative;
 }
 
 .result-card:hover {
   box-shadow: var(--shadow-md);
   transform: translateY(-2px);
+}
+
+.result-card.source-document {
+  border: 2px solid #667eea;
+  background: linear-gradient(to bottom, rgba(102, 126, 234, 0.05), white);
+}
+
+.source-badge {
+  position: absolute;
+  top: -12px;
+  right: 1rem;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 0.4rem 0.8rem;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+  z-index: 1;
 }
 
 .result-header {
@@ -488,6 +560,16 @@ const toggleExpand = (id) => {
   color: var(--text-primary);
   line-height: 1.6;
   margin: 0;
+}
+
+.result-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.result-actions .btn {
+  flex: 1;
 }
 
 .expand-btn {
