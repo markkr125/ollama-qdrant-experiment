@@ -267,7 +267,7 @@ Or just plain text for unstructured documents."
 import { computed, onMounted, ref } from 'vue'
 import api from '../api'
 
-const emit = defineEmits(['close', 'success'])
+const emit = defineEmits(['close', 'success', 'job-started'])
 
 const uploadMethod = ref('file')
 const selectedFiles = ref([])
@@ -361,7 +361,7 @@ const handleSubmit = async () => {
 
   try {
     if (uploadMethod.value === 'file') {
-      // File upload mode
+      // File upload mode with job system
       if (selectedFiles.value.length === 0) {
         errorMessage.value = 'Please select at least one file'
         uploading.value = false
@@ -390,44 +390,33 @@ const handleSubmit = async () => {
         }
       }
 
-      // Upload files one by one
-      let successCount = 0
-      let failCount = 0
-      
+      // Create FormData with all files
+      const formData = new FormData()
       for (const file of selectedFiles.value) {
-        try {
-          const formData = new FormData()
-          formData.append('file', file)
-          // Base64 encode the filename to prevent encoding issues with Hebrew/Arabic/etc
-          formData.append('filename_encoded', btoa(unescape(encodeURIComponent(file.name))))
+        formData.append('files', file)
+      }
 
-          // Add auto-categorization flag
-          if (categorizationEnabled.value && autoCategorize.value) {
-            formData.append('auto_categorize', 'true')
-          }
+      // Add auto-categorization flag
+      if (categorizationEnabled.value && autoCategorize.value) {
+        formData.append('auto_categorize', 'true')
+      }
 
-          if (Object.keys(metadata).length > 0) {
-            formData.append('metadata', JSON.stringify(metadata))
-          }
+      if (Object.keys(metadata).length > 0) {
+        formData.append('metadata', JSON.stringify(metadata))
+      }
 
-          await api.post('/documents/upload', formData, {
-            headers: {
-              'Content-Type': 'multipart/form-data'
-            }
-          })
-          
-          successCount++
-        } catch (err) {
-          console.error(`Failed to upload ${file.name}:`, err)
-          failCount++
+      // Upload and get job ID
+      const response = await api.post('/documents/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
         }
-      }
+      })
 
-      if (failCount === 0) {
-        successMessage.value = `Successfully uploaded ${successCount} file${successCount > 1 ? 's' : ''}`
-      } else {
-        successMessage.value = `Uploaded ${successCount} file${successCount > 1 ? 's' : ''}, ${failCount} failed`
-      }
+      // Emit job started event with job ID
+      emit('job-started', response.data.jobId)
+      
+      // Close this modal (progress modal will open)
+      close()
 
     } else {
       // Text input mode (original functionality)
@@ -461,13 +450,13 @@ const handleSubmit = async () => {
       })
 
       successMessage.value = response.data.message
+      
+      // Emit success and close after delay
+      setTimeout(() => {
+        emit('success')
+        close()
+      }, 1500)
     }
-    
-    // Emit success and close after delay
-    setTimeout(() => {
-      emit('success')
-      close()
-    }, 1500)
 
   } catch (error) {
     console.error('Upload error:', error)

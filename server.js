@@ -72,6 +72,204 @@ if (PII_DETECTION_ENABLED) {
   console.log(`PII Detection enabled using ${PII_DETECTION_METHOD} method`);
 }
 
+// In-memory upload job store
+const uploadJobs = new Map();
+let jobIdCounter = 1;
+
+function generateJobId() {
+  return `job_${Date.now()}_${jobIdCounter++}`;
+}
+
+function createJob(totalFiles) {
+  const jobId = generateJobId();
+  const job = {
+    id: jobId,
+    status: 'processing', // processing, completed, stopped, error
+    totalFiles,
+    processedFiles: 0,
+    successfulFiles: 0,
+    failedFiles: 0,
+    currentFile: null,
+    files: [], // { name, status: 'pending'|'processing'|'success'|'error', error?, id? }
+    errors: [],
+    startTime: Date.now(),
+    endTime: null
+  };
+  uploadJobs.set(jobId, job);
+  return job;
+}
+
+/**
+ * Process a single file upload
+ */
+async function processSingleFile(file, autoCategorize = false) {
+  // Decode base64-encoded filename (used to preserve UTF-8 for Hebrew/Arabic/etc)
+  let filename = file.originalname;
+  
+  // Note: For multiple file upload, filename_encoded should be per-file
+  // For now, we'll use the originalname directly and handle encoding in the client
+  if (/[\x80-\xFF]/.test(filename)) {
+    // Fallback: try to decode if contains non-ASCII
+    try {
+      const decoded = Buffer.from(filename, 'latin1').toString('utf8');
+      if (!decoded.includes('\uFFFD')) {
+        filename = decoded;
+      }
+    } catch (e) {
+      console.warn('Failed to decode filename:', e.message);
+    }
+  }
+  
+  const fileExt = filename.split('.').pop().toLowerCase();
+  
+  console.log(`Processing file: ${filename} (${fileExt})`);
+
+  let content = '';
+  let metadata = {};
+
+  // Parse file based on type
+  switch (fileExt) {
+    case 'txt':
+      content = file.buffer.toString('utf8');
+      break;
+
+    case 'json':
+      const jsonData = JSON.parse(file.buffer.toString('utf8'));
+      // If JSON has content field, use it; otherwise stringify
+      content = jsonData.content || JSON.stringify(jsonData, null, 2);
+      // Extract metadata from JSON if present
+      if (jsonData.metadata) metadata = jsonData.metadata;
+      if (jsonData.category) metadata.category = jsonData.category;
+      if (jsonData.location) metadata.location = jsonData.location;
+      if (jsonData.tags) metadata.tags = jsonData.tags;
+      break;
+
+    case 'pdf':
+      // Try PDF.js → HTML → Markdown approach
+      console.log('Converting PDF using HTML intermediate format...');
+      
+      try {
+        content = await pdfToMarkdownViaHtml(file.buffer);
+        console.log('✓ PDF converted via HTML → Markdown successfully');
+      } catch (htmlError) {
+        console.warn('PDF via HTML conversion failed, trying @opendocsg/pdf2md:', htmlError.message);
+        
+        // Fallback 1: Try @opendocsg/pdf2md
+        try {
+          content = await pdf2md(file.buffer);
+          console.log('✓ PDF converted with @opendocsg/pdf2md');
+        } catch (pdf2mdError) {
+          console.warn('pdf2md failed, using custom text processing:', pdf2mdError.message);
+          
+          // Fallback 2: Basic text extraction with processing
+          const pdfData = await pdfParse(file.buffer);
+          content = processPdfText(pdfData.text);
+          console.log('✓ PDF processed with basic text extraction');
+        }
+      }
+      
+      // Get page count
+      const pdfData = await pdfParse(file.buffer);
+      metadata.pages = pdfData.numpages;
+      break;
+
+    case 'docx':
+      // Convert to markdown to preserve headings, lists, tables, etc.
+      const docxResult = await mammoth.convertToMarkdown({ buffer: file.buffer });
+      content = docxResult.value;
+      console.log('DOCX converted to markdown successfully');
+      break;
+
+    case 'doc':
+      // Note: .doc files are harder to parse, mammoth primarily supports .docx
+      // Attempting to parse as docx format and convert to markdown
+      const docResult = await mammoth.convertToMarkdown({ buffer: file.buffer });
+      content = docResult.value;
+      console.log('DOC converted to markdown successfully');
+      break;
+
+    default:
+      throw new Error(`Unsupported file type: ${fileExt}. Supported: txt, json, pdf, docx, doc`);
+  }
+
+  if (!content || content.trim().length === 0) {
+    throw new Error('File is empty or could not extract content');
+  }
+
+  // PII Detection - scan for sensitive information
+  if (PII_DETECTION_ENABLED) {
+    console.log('Scanning for PII...');
+    const piiResult = await detectPII(content);
+    
+    if (piiResult.hasPII) {
+      metadata.pii_detected = true;
+      metadata.pii_types = piiResult.piiTypes;
+      metadata.pii_details = piiResult.piiDetails;
+      metadata.pii_risk_level = piiResult.riskLevel;
+      metadata.pii_scan_date = piiResult.scanTimestamp;
+      metadata.pii_detection_method = piiResult.detectionMethod;
+      
+      console.log(`⚠️  PII detected: ${piiResult.piiTypes.join(', ')} (${piiResult.piiDetails.length} items)`);
+    } else {
+      metadata.pii_detected = false;
+      metadata.pii_scan_date = piiResult.scanTimestamp;
+      console.log('✓ No PII detected');
+    }
+  }
+
+  // Automatic categorization if enabled and requested
+  if (CATEGORIZATION_MODEL && autoCategorize) {
+    console.log('Automatic categorization requested...');
+    const extracted = await categorizeDocument(content);
+    metadata = { ...metadata, ...extracted };
+    console.log('Extracted metadata:', extracted);
+  }
+
+  // Parse metadata from content if it's structured
+  const parsedMetadata = parseMetadataFromContent(filename, content, metadata);
+  parsedMetadata.file_type = fileExt;
+
+  // Get dense embedding
+  const denseEmbedding = await getDenseEmbedding(content);
+  if (!denseEmbedding) {
+    throw new Error('Failed to generate embedding');
+  }
+
+  // Generate sparse vector
+  const sparseVector = getSparseVector(content);
+
+  // Create point ID from filename and timestamp
+  const pointId = simpleHash(filename + Date.now());
+
+  // Store in Qdrant
+  await qdrantClient.upsert(COLLECTION_NAME, {
+    points: [
+      {
+        id: pointId,
+        vector: {
+          dense: denseEmbedding,
+          sparse: sparseVector
+        },
+        payload: {
+          ...parsedMetadata,
+          content: content,
+          added_at: new Date().toISOString()
+        }
+      }
+    ]
+  });
+
+  console.log(`✅ Successfully uploaded: ${filename}`);
+
+  return {
+    filename,
+    id: pointId,
+    fileType: fileExt,
+    contentLength: content.length,
+    metadata: parsedMetadata
+  };
+}
+
 /**
  * Detect PII in content
  */
@@ -1295,230 +1493,138 @@ app.get('/api/facets', async (req, res) => {
  * POST /api/documents/upload
  * Upload a document file (supports txt, json, pdf, doc, docx)
  */
-app.post('/api/documents/upload', upload.single('file'), async (req, res) => {
+app.post('/api/documents/upload', upload.array('files', 100), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: 'No files uploaded' });
     }
 
-    const file = req.file;
-    // Decode base64-encoded filename (used to preserve UTF-8 for Hebrew/Arabic/etc)
-    let filename = file.originalname;
+    const files = req.files;
+    const autoCategorize = req.body.auto_categorize === 'true';
+
+    // Create job
+    const job = createJob(files.length);
     
-    if (req.body.filename_encoded) {
-      try {
-        filename = decodeURIComponent(escape(Buffer.from(req.body.filename_encoded, 'base64').toString('binary')));
-        console.log('Decoded filename from base64:', filename);
-      } catch (e) {
-        console.warn('Failed to decode base64 filename:', e.message);
-        // Fall back to attempting latin1 decode
-        if (/[\x80-\xFF]/.test(filename)) {
-          try {
-            const decoded = Buffer.from(filename, 'latin1').toString('utf8');
-            if (!decoded.includes('\uFFFD')) {
-              filename = decoded;
-            }
-          } catch (e2) {
-            console.warn('Failed to decode filename:', e2.message);
-          }
-        }
-      }
-    } else if (/[\x80-\xFF]/.test(filename)) {
-      // Fallback: try to decode if no encoded filename provided
-      try {
-        const decoded = Buffer.from(filename, 'latin1').toString('utf8');
-        if (!decoded.includes('\uFFFD')) {
-          filename = decoded;
-        }
-      } catch (e) {
-        console.warn('Failed to decode filename:', e.message);
-      }
-    }
-    
-    const fileExt = filename.split('.').pop().toLowerCase();
-    
-    console.log(`Uploading file: ${filename} (${fileExt})`);
+    // Initialize file statuses
+    job.files = files.map(f => ({
+      name: f.originalname,
+      status: 'pending',
+      error: null,
+      id: null
+    }));
 
-    let content = '';
-    let metadata = {};
-
-    // Parse file based on type
-    try {
-      switch (fileExt) {
-        case 'txt':
-          content = file.buffer.toString('utf8');
-          break;
-
-        case 'json':
-          const jsonData = JSON.parse(file.buffer.toString('utf8'));
-          // If JSON has content field, use it; otherwise stringify
-          content = jsonData.content || JSON.stringify(jsonData, null, 2);
-          // Extract metadata from JSON if present
-          if (jsonData.metadata) metadata = jsonData.metadata;
-          if (jsonData.category) metadata.category = jsonData.category;
-          if (jsonData.location) metadata.location = jsonData.location;
-          if (jsonData.tags) metadata.tags = jsonData.tags;
-          break;
-
-        case 'pdf':
-          // Try PDF.js → HTML → Markdown approach
-          console.log('Converting PDF using HTML intermediate format...');
-          
-          try {
-            content = await pdfToMarkdownViaHtml(file.buffer);
-            console.log('✓ PDF converted via HTML → Markdown successfully');
-          } catch (htmlError) {
-            console.warn('PDF via HTML conversion failed, trying @opendocsg/pdf2md:', htmlError.message);
-            
-            // Fallback 1: Try @opendocsg/pdf2md
-            try {
-              content = await pdf2md(file.buffer);
-              console.log('✓ PDF converted with @opendocsg/pdf2md');
-            } catch (pdf2mdError) {
-              console.warn('pdf2md failed, using custom text processing:', pdf2mdError.message);
-              
-              // Fallback 2: Basic text extraction with processing
-              const pdfData = await pdfParse(file.buffer);
-              content = processPdfText(pdfData.text);
-              console.log('✓ PDF processed with basic text extraction');
-            }
-          }
-          
-          // Get page count
-          const pdfData = await pdfParse(file.buffer);
-          metadata.pages = pdfData.numpages;
-          break;
-
-        case 'docx':
-          // Convert to markdown to preserve headings, lists, tables, etc.
-          const docxResult = await mammoth.convertToMarkdown({ buffer: file.buffer });
-          content = docxResult.value;
-          console.log('DOCX converted to markdown successfully');
-          break;
-
-        case 'doc':
-          // Note: .doc files are harder to parse, mammoth primarily supports .docx
-          // Attempting to parse as docx format and convert to markdown
-          try {
-            const docResult = await mammoth.convertToMarkdown({ buffer: file.buffer });
-            content = docResult.value;
-            console.log('DOC converted to markdown successfully');
-          } catch (docError) {
-            return res.status(400).json({ 
-              error: 'Unable to parse .doc file. Please convert to .docx format.',
-              details: docError.message
-            });
-          }
-          break;
-
-        default:
-          return res.status(400).json({ 
-            error: `Unsupported file type: ${fileExt}`,
-            supported: ['txt', 'json', 'pdf', 'docx', 'doc']
-          });
-      }
-    } catch (parseError) {
-      console.error('File parsing error:', parseError);
-      return res.status(400).json({ 
-        error: `Failed to parse ${fileExt} file`,
-        details: parseError.message
-      });
-    }
-
-    if (!content || content.trim().length === 0) {
-      return res.status(400).json({ error: 'File is empty or could not extract content' });
-    }
-
-    // Parse additional metadata from request body if provided
-    if (req.body.metadata) {
-      try {
-        const additionalMetadata = JSON.parse(req.body.metadata);
-        metadata = { ...metadata, ...additionalMetadata };
-      } catch (e) {
-        // Ignore if metadata is not valid JSON
-      }
-    }
-
-    // PII Detection - scan for sensitive information
-    if (PII_DETECTION_ENABLED) {
-      console.log('Scanning for PII...');
-      const piiResult = await detectPII(content);
-      
-      if (piiResult.hasPII) {
-        metadata.pii_detected = true;
-        metadata.pii_types = piiResult.piiTypes;
-        metadata.pii_details = piiResult.piiDetails;
-        metadata.pii_risk_level = piiResult.riskLevel;
-        metadata.pii_scan_date = piiResult.scanTimestamp;
-        metadata.pii_detection_method = piiResult.detectionMethod;
-        
-        console.log(`⚠️  PII detected: ${piiResult.piiTypes.join(', ')} (${piiResult.piiDetails.length} items)`);
-      } else {
-        metadata.pii_detected = false;
-        metadata.pii_scan_date = piiResult.scanTimestamp;
-        console.log('✓ No PII detected');
-      }
-    }
-
-    // Automatic categorization if enabled and requested
-    if (CATEGORIZATION_MODEL && req.body.auto_categorize === 'true') {
-      console.log('Automatic categorization requested...');
-      const extracted = await categorizeDocument(content);
-      metadata = { ...metadata, ...extracted };
-      console.log('Extracted metadata:', extracted);
-    }
-
-    // Parse metadata from content if it's structured
-    const parsedMetadata = parseMetadataFromContent(filename, content, metadata);
-    parsedMetadata.file_type = fileExt;
-
-    // Get dense embedding
-    const denseEmbedding = await getDenseEmbedding(content);
-    if (!denseEmbedding) {
-      throw new Error('Failed to generate embedding');
-    }
-
-    // Generate sparse vector
-    const sparseVector = getSparseVector(content);
-
-    // Create point ID from filename and timestamp
-    const pointId = simpleHash(filename + Date.now());
-
-    // Store in Qdrant
-    await qdrantClient.upsert(COLLECTION_NAME, {
-      points: [
-        {
-          id: pointId,
-          vector: {
-            dense: denseEmbedding,
-            sparse: sparseVector
-          },
-          payload: {
-            ...parsedMetadata,
-            content: content,
-            added_at: new Date().toISOString()
-          }
-        }
-      ]
-    });
-
-    console.log(`✅ Successfully uploaded: ${filename}`);
-
+    // Return job ID immediately
     res.json({
       success: true,
-      message: `File "${filename}" uploaded successfully`,
-      id: pointId,
-      fileType: fileExt,
-      contentLength: content.length,
-      metadata: parsedMetadata
+      jobId: job.id,
+      totalFiles: files.length
     });
+
+    // Process files asynchronously
+    (async () => {
+      for (let i = 0; i < files.length; i++) {
+        // Check if job was stopped
+        if (job.status === 'stopped') {
+          console.log(`Job ${job.id} stopped. Skipping remaining files.`);
+          break;
+        }
+
+        const file = files[i];
+        const fileInfo = job.files[i];
+        
+        fileInfo.status = 'processing';
+        job.currentFile = fileInfo.name;
+
+        try {
+          const result = await processSingleFile(file, autoCategorize);
+          
+          fileInfo.status = 'success';
+          fileInfo.id = result.id;
+          job.successfulFiles++;
+        } catch (error) {
+          console.error(`Error processing file ${fileInfo.name}:`, error);
+          
+          fileInfo.status = 'error';
+          fileInfo.error = error.message;
+          job.failedFiles++;
+          job.errors.push({
+            filename: fileInfo.name,
+            error: error.message
+          });
+        } finally {
+          job.processedFiles++;
+          job.currentFile = null;
+        }
+      }
+
+      // Mark job as complete
+      if (job.status !== 'stopped') {
+        job.status = 'completed';
+      }
+      job.endTime = Date.now();
+      
+      console.log(`Job ${job.id} finished: ${job.successfulFiles} successful, ${job.failedFiles} failed`);
+    })();
+
   } catch (error) {
-    console.error('Error uploading file:', error);
+    console.error('Error creating upload job:', error);
     res.status(500).json({ 
       error: error.message,
-      details: 'Failed to upload file'
+      details: 'Failed to create upload job'
     });
   }
+});
+
+/**
+ * GET /api/upload-jobs/:jobId
+ * Get the status of an upload job
+ */
+app.get('/api/upload-jobs/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  const job = uploadJobs.get(jobId);
+  
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+  
+  res.json(job);
+});
+
+/**
+ * GET /api/upload-jobs/active
+ * Get the currently active upload job (if any)
+ */
+app.get('/api/upload-jobs/active', (req, res) => {
+  // Find any job that's still processing
+  for (const job of uploadJobs.values()) {
+    if (job.status === 'processing') {
+      return res.json(job);
+    }
+  }
+  
+  res.json(null);
+});
+
+/**
+ * POST /api/upload-jobs/:jobId/stop
+ * Stop an upload job
+ */
+app.post('/api/upload-jobs/:jobId/stop', (req, res) => {
+  const { jobId } = req.params;
+  const job = uploadJobs.get(jobId);
+  
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+  
+  if (job.status !== 'processing') {
+    return res.status(400).json({ error: 'Job is not processing' });
+  }
+  
+  job.status = 'stopped';
+  console.log(`Job ${jobId} marked for stopping`);
+  
+  res.json({ success: true, message: 'Job will stop after current file completes' });
 });
 
 /**

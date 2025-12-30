@@ -19,8 +19,19 @@
             <button @click="handleSurpriseMe" class="btn btn-secondary" :disabled="loading">
               🎲 Surprise Me
             </button>
-            <button @click="showUploadModal = true" class="btn btn-add">
+            <button 
+              v-if="!hasActiveUpload" 
+              @click="showUploadModal = true" 
+              class="btn btn-add"
+            >
               ➕ Add Document
+            </button>
+            <button 
+              v-else
+              @click="showProgressModal = true" 
+              class="btn btn-add uploading"
+            >
+              ⏳ Upload in progress...
             </button>
           </div>
         </div>
@@ -88,6 +99,16 @@
       v-if="showUploadModal"
       @close="showUploadModal = false"
       @success="handleUploadSuccess"
+      @job-started="handleJobStarted"
+    />
+
+    <!-- Upload Progress Modal -->
+    <UploadProgressModal
+      v-if="showProgressModal && activeJobId"
+      :show="showProgressModal"
+      :job-id="activeJobId"
+      @close="handleProgressModalClose"
+      @stop="handleStopUpload"
     />
 
     <!-- PII Details Modal -->
@@ -117,13 +138,14 @@
 
 <script setup>
 import { computed, onMounted, ref } from 'vue'
-import api from './api'
+import api, { getActiveUploadJob, stopUploadJob } from './api'
 import FacetBar from './components/FacetBar.vue'
 import PIIDetailsModal from './components/PIIDetailsModal.vue'
 import ResultsList from './components/ResultsList.vue'
 import ScanNotification from './components/ScanNotification.vue'
 import SearchForm from './components/SearchForm.vue'
 import UploadModal from './components/UploadModal.vue'
+import UploadProgressModal from './components/UploadProgressModal.vue'
 
 const loading = ref(false)
 const results = ref([])
@@ -132,12 +154,17 @@ const currentQuery = ref('')
 const searchType = ref('')
 const stats = ref(null)
 const showUploadModal = ref(false)
+const showProgressModal = ref(false)
+const activeJobId = ref(null)
 const showPIIModal = ref(false)
 const currentPIIData = ref(null)
 const showScanNotification = ref(false)
 const scanNotificationData = ref({})
 const searchFormRef = ref(null)
 const activeFilters = ref([]) // Array of { type, value }
+
+// Computed property for upload state
+const hasActiveUpload = computed(() => !!activeJobId.value)
 const lastSearchParams = ref(null) // Track last search parameters
 const similarDocumentId = ref(null) // Track current Find Similar source document
 
@@ -149,6 +176,9 @@ const activeFiltersLabel = computed(() => {
 
 // Load stats on mount and restore filter from URL
 onMounted(async () => {
+  // Check for active upload job first
+  await checkActiveUpload()
+  
   try {
     const response = await api.get('/stats')
     stats.value = response.data
@@ -174,12 +204,39 @@ onMounted(async () => {
       if (Array.isArray(parsedFilters) && parsedFilters.length > 0) {
         activeFilters.value = parsedFilters
         
+        // Separate never_scanned from other filters
+        const neverScannedFilter = activeFilters.value.find(f => f.type === 'pii_risk' && f.value === 'never_scanned')
+        const otherFilters = activeFilters.value.filter(f => !(f.type === 'pii_risk' && f.value === 'never_scanned'))
+        
         // Build filters for search
-        const filters = {
-          must: activeFilters.value.map(f => ({
-            key: f.type === 'tag' ? 'tags' : f.type,
-            match: f.type === 'tag' ? { any: [f.value] } : { value: f.value }
-          }))
+        let filters = {}
+        
+        const mustFilters = otherFilters.map(f => {
+          if (f.type === 'pii_risk') {
+            if (f.value === 'none') {
+              return { key: 'pii_detected', match: { value: false } }
+            } else {
+              return { key: 'pii_risk_level', match: { value: f.value } }
+            }
+          } else if (f.type === 'tag') {
+            return { key: 'tags', match: { any: [f.value] } }
+          } else if (f.type === 'pii_type') {
+            return { key: 'pii_types', match: { any: [f.value] } }
+          } else {
+            return { key: f.type, match: { value: f.value } }
+          }
+        })
+        
+        if (mustFilters.length > 0) {
+          filters.must = mustFilters
+        }
+        
+        // Add never_scanned filter as must_not
+        if (neverScannedFilter) {
+          filters.must_not = [
+            { key: 'pii_detected', match: { value: true } },
+            { key: 'pii_detected', match: { value: false } }
+          ]
         }
         
         // Execute the filtered search
@@ -447,6 +504,85 @@ const handleUploadSuccess = async () => {
   }
 }
 
+// Handle job started from upload modal
+const handleJobStarted = (jobId) => {
+  activeJobId.value = jobId
+  localStorage.setItem('activeUploadJobId', jobId)
+  showProgressModal.value = true
+}
+
+// Handle progress modal close
+const handleProgressModalClose = async () => {
+  showProgressModal.value = false
+  
+  // Clear job ID if complete
+  if (activeJobId.value) {
+    // Check job status first
+    try {
+      const response = await api.get(`/upload-jobs/${activeJobId.value}`)
+      if (response.data.status === 'completed' || response.data.status === 'stopped') {
+        activeJobId.value = null
+        localStorage.removeItem('activeUploadJobId')
+        
+        // Reload stats and results
+        await handleUploadSuccess()
+        if (currentQuery.value) {
+          performSearch()
+        }
+      }
+    } catch (error) {
+      console.error('Error checking job status:', error)
+      // Clear anyway on error
+      activeJobId.value = null
+      localStorage.removeItem('activeUploadJobId')
+    }
+  }
+}
+
+// Handle stop upload
+const handleStopUpload = async (jobId) => {
+  try {
+    await stopUploadJob(jobId)
+  } catch (error) {
+    console.error('Error stopping upload:', error)
+  }
+}
+
+// Check for active upload job on mount
+const checkActiveUpload = async () => {
+  // Check localStorage first
+  const storedJobId = localStorage.getItem('activeUploadJobId')
+  if (storedJobId) {
+    try {
+      // Verify job still exists and is processing
+      const response = await api.get(`/upload-jobs/${storedJobId}`)
+      if (response.data && response.data.status === 'processing') {
+        activeJobId.value = storedJobId
+        // Don't auto-open modal, just restore the job state
+        // User can click the header button to see progress
+      } else {
+        // Job completed or doesn't exist, clear localStorage
+        localStorage.removeItem('activeUploadJobId')
+      }
+    } catch (error) {
+      // Job not found, clear localStorage
+      localStorage.removeItem('activeUploadJobId')
+    }
+  } else {
+    // Check if there's any active job on the server
+    try {
+      const activeJob = await getActiveUploadJob()
+      if (activeJob && activeJob.id) {
+        activeJobId.value = activeJob.id
+        localStorage.setItem('activeUploadJobId', activeJob.id)
+        // Don't auto-open modal, just restore the job state
+      }
+    } catch (error) {
+      console.error('Error checking active upload:', error)
+    }
+  }
+}
+
 // Handle facet filter - category
 const handleFilterCategory = async (category) => {
   // Check if this filter already exists
@@ -632,6 +768,15 @@ const handleFilterPIIType = async (piiType) => {
     activeFilters.value.push({ type: 'pii_type', value: piiType })
   }
   
+  // Update URL
+  const url = new URL(window.location)
+  if (activeFilters.value.length > 0) {
+    url.searchParams.set('filters', JSON.stringify(activeFilters.value))
+  } else {
+    url.searchParams.delete('filters')
+  }
+  window.history.pushState({}, '', url)
+  
   const filters = {
     must: activeFilters.value.map(f => ({
       key: f.type === 'tag' ? 'tags' : (f.type === 'pii_type' ? 'pii_types' : f.type),
@@ -656,6 +801,15 @@ const handleFilterPIIRisk = async (riskLevel) => {
   } else {
     activeFilters.value.push({ type: 'pii_risk', value: riskLevel })
   }
+  
+  // Update URL
+  const url = new URL(window.location)
+  if (activeFilters.value.length > 0) {
+    url.searchParams.set('filters', JSON.stringify(activeFilters.value))
+  } else {
+    url.searchParams.delete('filters')
+  }
+  window.history.pushState({}, '', url)
   
   // Special handling for "none" and "never_scanned"
   // Separate never_scanned from other filters
@@ -870,6 +1024,24 @@ const handleClearFilter = async () => {
 .btn-add:hover {
   background: #0d9668;
   box-shadow: var(--shadow-md);
+}
+
+.btn-add.uploading {
+  background: linear-gradient(90deg, #ff9800, #f57c00);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.btn-add.uploading:hover {
+  background: linear-gradient(90deg, #f57c00, #e65100);
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.8;
+  }
 }
 
 .main {
