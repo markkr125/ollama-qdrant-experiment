@@ -79,6 +79,7 @@
               @page-change="handlePageChange"
               @find-similar="handleFindSimilar"
               @clear-similar="handleClearSimilar"
+              @clear-random="handleClearRandom"
               @show-pii-modal="handleShowPIIModal"
               @refresh-results="performSearch"
               @scan-complete="handleScanComplete"
@@ -249,6 +250,12 @@ onMounted(async () => {
   // Restore from URL
   const url = new URL(window.location)
   
+  // Clean up old 'random' parameter if it exists (from previous version)
+  if (url.searchParams.has('random')) {
+    url.searchParams.delete('random')
+    window.history.replaceState({}, '', url)
+  }
+  
   // Check for similarTo parameter first
   const similarTo = url.searchParams.get('similarTo')
   if (similarTo) {
@@ -256,10 +263,10 @@ onMounted(async () => {
     return // Exit early, don't process filters
   }
   
-  // Check for random parameter to restore Surprise Me results
-  const randomIds = url.searchParams.get('random')
-  if (randomIds) {
-    await restoreRandomResults(randomIds)
+  // Check for randomSeed parameter to restore Surprise Me results
+  const randomSeed = url.searchParams.get('randomSeed')
+  if (randomSeed && randomSeed !== 'null') {
+    await restoreRandomResults(randomSeed)
     return // Exit early
   }
   
@@ -466,6 +473,47 @@ const handlePageChange = async (page) => {
     return
   }
   
+  // If we're in Random Discovery mode, fetch new page with same seed
+  if (searchType.value === 'random') {
+    loading.value = true
+    try {
+      // Update the page in SearchForm
+      if (searchFormRef.value) {
+        searchFormRef.value.currentPage = page
+      }
+      
+      // Get seed from URL
+      const url = new URL(window.location)
+      const seed = url.searchParams.get('randomSeed')
+      
+      if (!seed) {
+        console.error('No seed found for random pagination')
+        return
+      }
+      
+      // Get limit from SearchForm
+      const limit = searchFormRef.value?.limit || 10
+      const offset = (page - 1) * limit
+      
+      // Fetch random documents for this page with same seed
+      const response = await api.get('/random', {
+        params: { 
+          limit,
+          seed,
+          offset
+        }
+      })
+      
+      results.value = response.data.results || []
+      totalResults.value = response.data.total || results.value.length
+    } catch (error) {
+      console.error('Random pagination error:', error)
+    } finally {
+      loading.value = false
+    }
+    return
+  }
+  
   if (searchFormRef.value) {
     searchFormRef.value.goToPage(page)
   }
@@ -525,17 +573,26 @@ const handleSurpriseMe = async () => {
   results.value = []
 
   try {
+    // Always generate a new seed for fresh randomness
+    const url = new URL(window.location)
+    const seed = Date.now().toString()
+    
+    // Clean up old parameters
+    url.searchParams.delete('random')
+    
     const response = await api.get('/random', {
-      params: { limit: searchFormRef.value?.limit || 10 }
+      params: { 
+        limit: searchFormRef.value?.limit || 10,
+        seed,
+        offset: 0
+      }
     })
     
     results.value = response.data.results || []
     totalResults.value = response.data.total || results.value.length
     
-    // Save document IDs to URL for persistence on refresh
-    const docIds = results.value.map(r => r.id).join(',')
-    const url = new URL(window.location)
-    url.searchParams.set('random', docIds)
+    // Save seed to URL for persistence on refresh
+    url.searchParams.set('randomSeed', response.data.seed)
     window.history.pushState({}, '', url)
   } catch (error) {
     console.error('Surprise me error:', error)
@@ -545,25 +602,34 @@ const handleSurpriseMe = async () => {
   }
 }
 
-// Restore random results from URL
-const restoreRandomResults = async (docIds) => {
+// Restore random results from URL using seed
+const restoreRandomResults = async (seed) => {
   loading.value = true
   currentQuery.value = 'Random Discovery'
   searchType.value = 'random'
   results.value = []
   
   try {
-    const ids = docIds.split(',')
-    const promises = ids.map(id => api.get(`/document/${id}`))
-    const responses = await Promise.all(promises)
+    // Get the limit from URL or SearchForm
+    const url = new URL(window.location)
+    const limitParam = url.searchParams.get('limit')
+    const limit = limitParam ? parseInt(limitParam) : (searchFormRef.value?.limit || 10)
     
-    results.value = responses.map(r => r.data)
-    totalResults.value = results.value.length
+    const response = await api.get('/random', {
+      params: { 
+        limit,
+        seed,
+        offset: 0
+      }
+    })
+    
+    results.value = response.data.results || []
+    totalResults.value = response.data.total || results.value.length
   } catch (error) {
     console.error('Failed to restore random results:', error)
     // On error, clear the invalid parameter and show nothing
     const url = new URL(window.location)
-    url.searchParams.delete('random')
+    url.searchParams.delete('randomSeed')
     window.history.replaceState({}, '', url)
   } finally {
     loading.value = false
@@ -577,6 +643,25 @@ const handleClearSimilar = async () => {
   // Clear similarTo from URL
   const url = new URL(window.location)
   url.searchParams.delete('similarTo')
+  window.history.pushState({}, '', url)
+  
+  // If there was a previous search, restore it
+  if (lastSearchParams.value && lastSearchParams.value.query) {
+    await handleSearch(lastSearchParams.value)
+  } else {
+    // Otherwise clear everything
+    results.value = []
+    totalResults.value = 0
+    currentQuery.value = ''
+    searchType.value = ''
+  }
+}
+
+// Handle clear random
+const handleClearRandom = async () => {
+  // Clear randomSeed from URL
+  const url = new URL(window.location)
+  url.searchParams.delete('randomSeed')
   window.history.pushState({}, '', url)
   
   // If there was a previous search, restore it

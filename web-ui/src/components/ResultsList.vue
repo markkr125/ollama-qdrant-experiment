@@ -22,6 +22,14 @@
           >
             ✕ Clear
           </button>
+          <button 
+            v-if="searchType === 'random'"
+            @click="emit('clear-random')"
+            class="clear-similar-btn"
+            title="Clear Random Discovery"
+          >
+            ✕ Clear
+          </button>
         </div>
       </div>
       <div v-else class="empty-state">
@@ -259,7 +267,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['page-change', 'find-similar', 'clear-similar', 'show-pii-modal', 'refresh-results', 'scan-complete'])
+const emit = defineEmits(['page-change', 'find-similar', 'clear-similar', 'clear-random', 'show-pii-modal', 'refresh-results', 'scan-complete'])
 
 const expandedIds = ref(new Set())
 const scanning = ref({})

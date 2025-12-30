@@ -71,6 +71,21 @@ Welcome to the Ollama Qdrant Experiment documentation! This folder contains comp
 
 ---
 
+### [PII Detection & GDPR Compliance](PII_DETECTION.md)
+**Comprehensive PII scanning and compliance features**
+- 5 detection methods (Regex, Ollama, Hybrid, Compromise, Advanced)
+- Dual-agent validation for accuracy
+- 11 PII types detected (email, phone, SSN, credit card, etc.)
+- Risk level classification (None, Low, Medium, High, Critical)
+- Web UI filters for PII severity and types
+- Bulk scanning capabilities
+- Multi-language support
+- GDPR compliance use cases
+
+**Best for:** Understanding PII detection, implementing GDPR compliance, and filtering sensitive documents.
+
+---
+
 ## 🚀 Quick Navigation
 
 ### By Use Case
@@ -81,6 +96,7 @@ Welcome to the Ollama Qdrant Experiment documentation! This folder contains comp
 - **Work with plain text documents** → [Mixed Dataset Guide](MIXED_DATASET.md)
 - **Search by location** → [Location Search Examples](LOCATION_SEARCH_EXAMPLES.md)
 - **Build complex filters** → [Advanced Queries](ADVANCED_QUERIES.md)
+- **Detect PII and ensure GDPR compliance** → [PII Detection](PII_DETECTION.md)
 
 ### By Experience Level
 
@@ -92,10 +108,12 @@ Welcome to the Ollama Qdrant Experiment documentation! This folder contains comp
 **Intermediate:**
 1. Read [Mixed Dataset Guide](MIXED_DATASET.md) - Learn about document flexibility
 2. Study [Advanced Queries](ADVANCED_QUERIES.md) - Master complex filtering
-3. Experiment with combining techniques
+3. Explore [PII Detection](PII_DETECTION.md) - Implement compliance features
+4. Experiment with combining techniques
 
 **Advanced:**
 - All documents provide implementation details and best practices
+- [PII Detection](PII_DETECTION.md) covers advanced multi-agent validation
 - Use as reference while building your own features
 - Adapt patterns to your specific use cases
 

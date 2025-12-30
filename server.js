@@ -1287,24 +1287,34 @@ app.post('/api/recommend', async (req, res) => {
  */
 app.get('/api/random', async (req, res) => {
   try {
-    const { limit = 10 } = req.query;
+    const { limit = 10, seed, offset = 0 } = req.query;
     
     // Get collection info to know total count
     const info = await qdrantClient.getCollection(COLLECTION_NAME);
     const totalPoints = info.points_count;
     
     if (totalPoints === 0) {
-      return res.json({ results: [] });
+      return res.json({ results: [], seed: seed || Date.now() });
     }
     
     const requestedLimit = parseInt(limit);
+    const offsetNum = parseInt(offset);
+    
+    // Use seed for reproducible randomness (or generate new one)
+    const usedSeed = seed ? parseInt(seed) : Date.now();
+    
+    // Seeded random number generator (simple LCG)
+    const seededRandom = (s) => {
+      const x = Math.sin(s) * 10000;
+      return x - Math.floor(x);
+    };
     
     // Fetch more results than needed to randomly sample from
     const fetchLimit = Math.min(totalPoints, requestedLimit * 5); // Fetch 5x to have good randomness
     const maxOffset = Math.max(0, totalPoints - fetchLimit);
-    const randomOffset = Math.floor(Math.random() * maxOffset);
+    const randomOffset = Math.floor(seededRandom(usedSeed) * maxOffset);
     
-    console.log(`Random request: totalPoints=${totalPoints}, requestedLimit=${requestedLimit}, fetchLimit=${fetchLimit}, randomOffset=${randomOffset}`);
+    console.log(`Random request: seed=${usedSeed}, totalPoints=${totalPoints}, requestedLimit=${requestedLimit}, offset=${offsetNum}, fetchLimit=${fetchLimit}, randomOffset=${randomOffset}`);
     
     // Use scroll API with random offset
     const results = await qdrantClient.scroll(COLLECTION_NAME, {
@@ -1313,16 +1323,17 @@ app.get('/api/random', async (req, res) => {
       with_payload: true
     });
     
-    // Randomly shuffle and take only the requested amount
+    // Seeded shuffle using seed + offset for pagination
     const shuffled = results.points
-      .map(r => ({ r, sort: Math.random() }))
+      .map((r, idx) => ({ r, sort: seededRandom(usedSeed + idx) }))
       .sort((a, b) => a.sort - b.sort)
       .map(({ r }) => r)
-      .slice(0, requestedLimit);
+      .slice(offsetNum, offsetNum + requestedLimit);
     
     res.json({
       searchType: 'random',
       total: totalPoints,
+      seed: usedSeed,
       results: shuffled.map(r => ({
         id: r.id,
         score: 1.0, // Random results don't have scores

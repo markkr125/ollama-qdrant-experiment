@@ -11,6 +11,8 @@ This is a **comprehensive showcase** of Qdrant's advanced features:
 5. ✅ **Mixed Dataset Handling** - Structured + Unstructured documents coexisting
 6. ✅ **Payload Indexes** - Fast filtered searches without collection scans
 7. ✅ **Location-based Search** - City name filtering
+8. ✅ **PII Detection** - Multi-method GDPR compliance scanning with dual-agent validation
+9. ✅ **Background Processing** - Async uploads with progress tracking and crash resistance
 
 ## 📚 Dataset: 27 Documents
 
@@ -106,11 +108,14 @@ Fast filtering on:
 
 | File | Purpose |
 |------|---------|
-| [README.md](README.md) | Main documentation |
+| [README.md](README.md) | Main documentation index |
 | [QUICK_REFERENCE.md](QUICK_REFERENCE.md) | Quick command guide |
 | [ADVANCED_QUERIES.md](ADVANCED_QUERIES.md) | Complex filtering examples |
 | [LOCATION_SEARCH_EXAMPLES.md](LOCATION_SEARCH_EXAMPLES.md) | Location/geo queries |
 | [MIXED_DATASET.md](MIXED_DATASET.md) | Structured vs unstructured handling |
+| [PII_DETECTION.md](PII_DETECTION.md) | PII scanning and GDPR compliance |
+| [FILE_UPLOAD_IMPLEMENTATION.md](FILE_UPLOAD_IMPLEMENTATION.md) | Upload system architecture |
+| [WEBUI.md](WEBUI.md) | Web interface documentation |
 
 ## 🎬 Demo Scenarios
 
