@@ -657,23 +657,40 @@ const handleFilterPIIRisk = async (riskLevel) => {
     activeFilters.value.push({ type: 'pii_risk', value: riskLevel })
   }
   
-  // Special handling for "none" - filter by pii_detected = false
-  const filters = {
-    must: activeFilters.value.map(f => {
-      if (f.type === 'pii_risk') {
-        if (f.value === 'none') {
-          return { key: 'pii_detected', match: { value: false } }
-        } else {
-          return { key: 'pii_risk_level', match: { value: f.value } }
-        }
-      } else if (f.type === 'tag') {
-        return { key: 'tags', match: { any: [f.value] } }
-      } else if (f.type === 'pii_type') {
-        return { key: 'pii_types', match: { any: [f.value] } }
+  // Special handling for "none" and "never_scanned"
+  // Separate never_scanned from other filters
+  const neverScannedFilter = activeFilters.value.find(f => f.type === 'pii_risk' && f.value === 'never_scanned')
+  const otherFilters = activeFilters.value.filter(f => !(f.type === 'pii_risk' && f.value === 'never_scanned'))
+  
+  let filters = {}
+  
+  // Add other filters to must clause
+  const mustFilters = otherFilters.map(f => {
+    if (f.type === 'pii_risk') {
+      if (f.value === 'none') {
+        return { key: 'pii_detected', match: { value: false } }
       } else {
-        return { key: f.type, match: { value: f.value } }
+        return { key: 'pii_risk_level', match: { value: f.value } }
       }
-    })
+    } else if (f.type === 'tag') {
+      return { key: 'tags', match: { any: [f.value] } }
+    } else if (f.type === 'pii_type') {
+      return { key: 'pii_types', match: { any: [f.value] } }
+    } else {
+      return { key: f.type, match: { value: f.value } }
+    }
+  })
+  
+  if (mustFilters.length > 0) {
+    filters.must = mustFilters
+  }
+  
+  // Add never_scanned filter as must_not
+  if (neverScannedFilter) {
+    filters.must_not = [
+      { key: 'pii_detected', match: { value: true } },
+      { key: 'pii_detected', match: { value: false } }
+    ]
   }
   
   await performFacetSearch(filters)
@@ -746,7 +763,7 @@ const performFacetSearch = async (filters) => {
   if (lastSearchParams.value && lastSearchParams.value.query) {
     const searchParams = {
       ...lastSearchParams.value,
-      filters: filters.must.length > 0 ? filters : undefined
+      filters: (filters.must && filters.must.length > 0) || filters.must_not ? filters : undefined
     }
     const filterText = activeFilters.value.length > 0 ? ` (${activeFilters.value.map(f => f.value).join(', ')})` : ''
     currentQuery.value = `${lastSearchParams.value.query}${filterText}`

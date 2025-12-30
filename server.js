@@ -604,18 +604,64 @@ app.post('/api/search/semantic', async (req, res) => {
       };
       
       if (filters) {
-        scrollParams.filter = filters;
+        // Special handling for never_scanned filter - need to do client-side filtering
+        const hasNeverScannedFilter = filters.must_not && 
+          filters.must_not.some(f => f.key === 'pii_detected');
+        
+        if (hasNeverScannedFilter) {
+          // Can't filter for missing fields in Qdrant, so fetch all and filter
+          const allResults = [];
+          let scrollOffset = null;
+          let hasMore = true;
+          
+          while (hasMore) {
+            const scrollResult = await qdrantClient.scroll(COLLECTION_NAME, {
+              limit: 100,
+              offset: scrollOffset,
+              with_payload: true,
+              filter: filters.must ? { must: filters.must } : undefined // Apply other filters
+            });
+            
+            scrollResult.points.forEach(p => {
+              // Check if pii_detected field is missing
+              if (p.payload.pii_detected === undefined) {
+                allResults.push(p);
+              }
+            });
+            
+            scrollOffset = scrollResult.next_page_offset;
+            hasMore = scrollOffset !== null && scrollOffset !== undefined;
+          }
+          
+          // Paginate results
+          const startIdx = parseInt(offset);
+          const endIdx = startIdx + parseInt(limit);
+          results = allResults.slice(startIdx, endIdx).map(p => ({
+            id: p.id,
+            score: 1.0,
+            payload: p.payload
+          }));
+          
+          totalEstimate = allResults.length;
+        } else {
+          scrollParams.filter = filters;
+          const scrollResults = await qdrantClient.scroll(COLLECTION_NAME, scrollParams);
+          results = scrollResults.points.map(p => ({
+            id: p.id,
+            score: 1.0,
+            payload: p.payload
+          }));
+          totalEstimate = await countFilteredDocuments(filters);
+        }
+      } else {
+        const scrollResults = await qdrantClient.scroll(COLLECTION_NAME, scrollParams);
+        results = scrollResults.points.map(p => ({
+          id: p.id,
+          score: 1.0,
+          payload: p.payload
+        }));
+        totalEstimate = await countFilteredDocuments(filters);
       }
-      
-      const scrollResults = await qdrantClient.scroll(COLLECTION_NAME, scrollParams);
-      results = scrollResults.points.map(p => ({
-        id: p.id,
-        score: 1.0, // No relevance score for scroll
-        payload: p.payload
-      }));
-      
-      // Get total count with filter
-      totalEstimate = await countFilteredDocuments(filters);
     } else {
       // Normal vector search
       const queryEmbedding = await getDenseEmbedding(query);
@@ -631,18 +677,48 @@ app.post('/api/search/semantic', async (req, res) => {
       };
       
       if (filters) {
-        searchParams.filter = filters;
+        const hasNeverScannedFilter = filters.must_not && 
+          filters.must_not.some(f => f.key === 'pii_detected');
+        
+        if (hasNeverScannedFilter) {
+          // For never_scanned with vector search, get more results then filter
+          const largeSearchParams = {
+            ...searchParams,
+            limit: 1000,
+            filter: filters.must ? { must: filters.must } : undefined
+          };
+          
+          const allResults = await qdrantClient.search(COLLECTION_NAME, largeSearchParams);
+          const filteredResults = allResults.filter(r => r.payload.pii_detected === undefined);
+          
+          const startIdx = parseInt(offset);
+          const endIdx = startIdx + parseInt(limit);
+          results = filteredResults.slice(startIdx, endIdx).map(r => ({
+            id: r.id,
+            score: r.score,
+            payload: r.payload
+          }));
+          
+          totalEstimate = filteredResults.length;
+        } else {
+          searchParams.filter = filters;
+          const searchResults = await qdrantClient.search(COLLECTION_NAME, searchParams);
+          results = searchResults.map(r => ({
+            id: r.id,
+            score: r.score,
+            payload: r.payload
+          }));
+          totalEstimate = await countFilteredDocuments(filters);
+        }
+      } else {
+        const searchResults = await qdrantClient.search(COLLECTION_NAME, searchParams);
+        results = searchResults.map(r => ({
+          id: r.id,
+          score: r.score,
+          payload: r.payload
+        }));
+        totalEstimate = await countFilteredDocuments(filters);
       }
-      
-      const searchResults = await qdrantClient.search(COLLECTION_NAME, searchParams);
-      results = searchResults.map(r => ({
-        id: r.id,
-        score: r.score,
-        payload: r.payload
-      }));
-      
-      // Get total count with filter
-      totalEstimate = await countFilteredDocuments(filters);
     }
     
     res.json({
@@ -748,22 +824,60 @@ app.post('/api/search/hybrid', async (req, res) => {
       }
     }
     
-    const results = await qdrantClient.search(COLLECTION_NAME, searchParams);
+    // Special handling for never_scanned filter with vector search
+    const hasNeverScannedFilter = filters && filters.must_not && 
+      filters.must_not.some(f => f.key === 'pii_detected');
     
-    // Get total count with filter
-    const totalEstimate = await countFilteredDocuments(searchParams.filter);
-    
-    res.json({
-      query,
-      searchType: 'hybrid',
-      denseWeight,
-      total: totalEstimate,
-      results: results.map(r => ({
-        id: r.id,
-        score: r.score,
-        payload: r.payload
-      }))
-    });
+    if (hasNeverScannedFilter) {
+      // For never_scanned with vector search, we need to search all then filter
+      // This is less efficient but necessary since Qdrant can't filter on missing fields
+      const largeSearchParams = {
+        ...searchParams,
+        limit: 1000, // Get more results to filter
+        filter: filters.must ? { must: filters.must } : undefined
+      };
+      
+      const allResults = await qdrantClient.search(COLLECTION_NAME, largeSearchParams);
+      
+      // Filter out documents that have pii_detected field
+      const filteredResults = allResults.filter(r => r.payload.pii_detected === undefined);
+      
+      // Paginate
+      const startIdx = parseInt(offset);
+      const endIdx = startIdx + parseInt(limit);
+      const results = filteredResults.slice(startIdx, endIdx);
+      
+      const totalEstimate = filteredResults.length;
+      
+      res.json({
+        query,
+        searchType: 'hybrid',
+        denseWeight,
+        total: totalEstimate,
+        results: results.map(r => ({
+          id: r.id,
+          score: r.score,
+          payload: r.payload
+        }))
+      });
+    } else {
+      const results = await qdrantClient.search(COLLECTION_NAME, searchParams);
+      
+      // Get total count with filter
+      const totalEstimate = await countFilteredDocuments(searchParams.filter);
+      
+      res.json({
+        query,
+        searchType: 'hybrid',
+        denseWeight,
+        total: totalEstimate,
+        results: results.map(r => ({
+          id: r.id,
+          score: r.score,
+          payload: r.payload
+        }))
+      });
+    }
   } catch (error) {
     console.error('Hybrid search error:', error);
     res.status(500).json({ error: error.message });
@@ -1069,6 +1183,7 @@ app.get('/api/facets', async (req, res) => {
     const tagCount = {};
     const piiTypeCount = {};
     let totalWithPII = 0;
+    let totalNeverScanned = 0;
     const riskLevels = { low: 0, medium: 0, high: 0, critical: 0 };
     let totalPoints = 0;
     let hasMore = true;
@@ -1101,7 +1216,10 @@ app.get('/api/facets', async (req, res) => {
         }
         
         // PII aggregation
-        if (point.payload.pii_detected) {
+        if (point.payload.pii_detected === undefined) {
+          // Never scanned
+          totalNeverScanned++;
+        } else if (point.payload.pii_detected === true) {
           totalWithPII++;
           
           // Count risk levels
@@ -1116,6 +1234,7 @@ app.get('/api/facets', async (req, res) => {
             });
           }
         }
+        // If pii_detected === false, it will be counted in "none" category below
       });
       
       offset = scrollResult.next_page_offset;
@@ -1140,8 +1259,19 @@ app.get('/api/facets', async (req, res) => {
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count);
     
-    // Add "none" count for documents without PII
-    riskLevels.none = totalPoints - totalWithPII;
+    // Add "none" count for documents without PII (scanned but clean)
+    riskLevels.none = totalPoints - totalWithPII - totalNeverScanned;
+    // Add "never_scanned" count
+    riskLevels.never_scanned = totalNeverScanned;
+    
+    // Debug logging
+    console.log('PII Stats:', {
+      totalPoints,
+      totalWithPII,
+      totalNeverScanned,
+      noneCount: riskLevels.none,
+      riskLevels
+    });
     
     res.json({
       categories,

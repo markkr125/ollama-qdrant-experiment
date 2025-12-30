@@ -167,6 +167,14 @@
           </div>
           <div class="popup-list">
             <button
+              @click="selectPIIRisk('never_scanned')"
+              class="popup-item"
+              :class="{ selected: selectedPIIRisk === 'never_scanned' }"
+            >
+              <span class="item-name">❓ Never Scanned</span>
+              <span class="item-count">{{ facets.piiRiskLevels.never_scanned || 0 }}</span>
+            </button>
+            <button
               @click="selectPIIRisk('none')"
               class="popup-item"
               :class="{ selected: selectedPIIRisk === 'none' }"
@@ -328,7 +336,6 @@ const facets = computed(() => {
     const categoryCounts = {}
     const locationCounts = {}
     const tagCounts = {}
-    const riskLevelCounts = { none: 0, low: 0, medium: 0, high: 0, critical: 0 }
     const piiTypeCounts = {}
     
     props.results.forEach(result => {
@@ -349,20 +356,11 @@ const facets = computed(() => {
         })
       }
       
-      // Count PII risk levels
-      if (result.payload?.pii_detected) {
-        const riskLevel = result.payload.pii_risk_level || 'medium'
-        riskLevelCounts[riskLevel] = (riskLevelCounts[riskLevel] || 0) + 1
-        
-        // Count PII types
-        if (result.payload.pii_types && Array.isArray(result.payload.pii_types)) {
-          result.payload.pii_types.forEach(type => {
-            piiTypeCounts[type] = (piiTypeCounts[type] || 0) + 1
-          })
-        }
-      } else {
-        // No PII detected
-        riskLevelCounts.none++
+      // Count PII types from current results
+      if (result.payload?.pii_detected && result.payload.pii_types && Array.isArray(result.payload.pii_types)) {
+        result.payload.pii_types.forEach(type => {
+          piiTypeCounts[type] = (piiTypeCounts[type] || 0) + 1
+        })
       }
     })
     
@@ -376,7 +374,8 @@ const facets = computed(() => {
       tags: Object.entries(tagCounts)
         .map(([name, count]) => ({ name, count }))
         .sort((a, b) => b.count - a.count),
-      piiRiskLevels: riskLevelCounts,
+      // Always use collection-wide PII risk level stats
+      piiRiskLevels: allFacets.value.piiRiskLevels,
       piiTypes: Object.entries(piiTypeCounts)
         .map(([name, count]) => ({ name, count }))
         .sort((a, b) => b.count - a.count)
@@ -525,7 +524,7 @@ onMounted(async () => {
       categories: data.categories || [],
       locations: data.locations || [],
       tags: data.tags || [],
-      piiRiskLevels: data.piiStats?.riskLevels || { none: 0, low: 0, medium: 0, high: 0, critical: 0 },
+      piiRiskLevels: data.piiStats?.riskLevels || { never_scanned: 0, none: 0, low: 0, medium: 0, high: 0, critical: 0 },
       piiTypes: data.piiTypes || []
     }
   } catch (error) {
