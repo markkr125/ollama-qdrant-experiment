@@ -28,6 +28,7 @@ Advanced vector database experiment demonstrating **Qdrant's powerful features**
 - **[Mixed Dataset Guide](docs/MIXED_DATASET.md)** - Handling structured + unstructured documents
 - **[Location Search Examples](docs/LOCATION_SEARCH_EXAMPLES.md)** - City and geo-radius queries
 - **[Advanced Queries](docs/ADVANCED_QUERIES.md)** - Complex filtering patterns
+- **[Document Cluster Visualization](docs/VISUALIZATION.md)** - Interactive 2D visualization guide
 
 ## 🌟 Key Features Demonstrated
 
@@ -36,7 +37,16 @@ Advanced vector database experiment demonstrating **Qdrant's powerful features**
 - Automatic score fusion for optimal relevance
 - Demonstrates how semantic understanding enhances keyword matching
 
-### 2. **Advanced Payload Filtering**
+### 2. **Document Cluster Visualization** 🆕
+- **Interactive 2D scatter plots** of your entire document collection
+- **UMAP dimensionality reduction** (768D → 2D) for semantic clustering
+- **Smart caching** with in-memory or Redis backend
+- **Color coding** by category, PII risk, or upload date
+- **Multi-select** with box/lasso selection tools
+- **Click-to-explore** similar documents instantly
+- See [Visualization Guide](docs/VISUALIZATION.md) for details
+
+### 3. **Advanced Payload Filtering**
 - **Complex conditions**: `must`, `should`, `must_not` operators
 - **Nested field filtering**: Arrays, objects, and deep structures
 - **Numeric range queries**: Price, ratings, dates
@@ -44,14 +54,14 @@ Advanced vector database experiment demonstrating **Qdrant's powerful features**
 - **Tag matching**: ANY/ALL semantics for array fields
 - **Payload indexing**: Fast filtered searches without full collection scans
 
-### 3. **Rich Metadata Support**
+### 4. **Rich Metadata Support**
 Each document includes structured metadata:
 - Category, location, tags, ratings
 - Prices, dates, status fields
 - Geographic coordinates for geo-queries
 - Custom fields for domain-specific filtering
 
-### 4. **Mixed Dataset Handling**
+### 5. **Mixed Dataset Handling**
 - **Structured documents**: Rich metadata with category, location, tags, prices, ratings
 - **Unstructured documents**: Plain text without metadata (essays, articles, notes)
 - **Seamless coexistence**: Both types searchable with semantic/hybrid search

@@ -3,7 +3,7 @@
     <header class="header">
       <div class="container">
         <div class="header-content">
-          <h1 class="title">
+          <h1 class="title" @click="switchView('search')" style="cursor: pointer;">
             <span class="icon">🔍</span>
             Ollama Qdrant Search
           </h1>
@@ -16,6 +16,9 @@
                 <strong>{{ stats.categories.length }}</strong> categories
               </span>
             </div>
+            <button @click="switchView('clusters')" class="btn btn-secondary" :class="{ 'active': currentView === 'clusters' }">
+              📊 Clusters
+            </button>
             <button @click="handleSurpriseMe" class="btn btn-secondary" :disabled="loading">
               🎲 Surprise Me
             </button>
@@ -40,52 +43,61 @@
 
     <main class="main">
       <div class="container">
-        <!-- Facet Bar (Browse by) -->
-        <FacetBar
-          :results="results"
-          :activeFilters="activeFilters"
-          @filter-category="handleFilterCategory"
-          @filter-location="handleFilterLocation"
-          @filter-tag="handleFilterTag"
-          @filter-pii-any="handleFilterPIIAny"
-          @filter-pii-type="handleFilterPIIType"
-          @filter-pii-risk="handleFilterPIIRisk"
-          @bulk-scan-pii="handleBulkScanPII"
-          @clear-filter="handleClearFilter"
+        <!-- Cluster Visualization View -->
+        <DocumentClusterView 
+          v-if="currentView === 'clusters'" 
+          @view-document="handleViewDocumentFromCluster"
         />
-        
-        <div class="layout">
-          <!-- Search Section -->
-          <div class="search-section">
-            <SearchForm
-              ref="searchFormRef"
-              @search="handleSearch"
-              @clear="handleClear"
-              :loading="loading"
-              :stats="stats"
-            />
-          </div>
 
-          <!-- Results Section -->
-          <div class="results-section">
-            <ResultsList
-              :results="results"
-              :loading="loading"
-              :query="currentQuery"
-              :searchType="searchType"
-              :currentPage="searchFormRef?.currentPage || 1"
-              :totalResults="totalResults"
-              :limit="searchFormRef?.limit || 10"
-              @page-change="handlePageChange"
-              @find-similar="handleFindSimilar"
-              @clear-similar="handleClearSimilar"
-              @clear-random="handleClearRandom"
-              @show-pii-modal="handleShowPIIModal"
-              @refresh-results="performSearch"
-              @scan-complete="handleScanComplete"
-            />
+        <!-- Search View (default) -->
+        <template v-else>
+          <!-- Facet Bar (Browse by) -->
+          <FacetBar
+            :results="results"
+            :activeFilters="activeFilters"
+            @filter-category="handleFilterCategory"
+            @filter-location="handleFilterLocation"
+            @filter-tag="handleFilterTag"
+            @filter-pii-any="handleFilterPIIAny"
+            @filter-pii-type="handleFilterPIIType"
+            @filter-pii-risk="handleFilterPIIRisk"
+            @bulk-scan-pii="handleBulkScanPII"
+            @clear-filter="handleClearFilter"
+          />
+          
+          <div class="layout">
+            <!-- Search Section -->
+            <div class="search-section">
+              <SearchForm
+                ref="searchFormRef"
+                @search="handleSearch"
+                @clear="handleClear"
+                :loading="loading"
+                :stats="stats"
+              />
+            </div>
+
+            <!-- Results Section -->
+            <div class="results-section">
+              <ResultsList
+                :results="results"
+                :loading="loading"
+                :query="currentQuery"
+                :searchType="searchType"
+                :currentPage="searchFormRef?.currentPage || 1"
+                :totalResults="totalResults"
+                :limit="searchFormRef?.limit || 10"
+                @page-change="handlePageChange"
+                @find-similar="handleFindSimilar"
+                @clear-similar="handleClearSimilar"
+                @clear-random="handleClearRandom"
+                @show-pii-modal="handleShowPIIModal"
+                @refresh-results="performSearch"
+                @scan-complete="handleScanComplete"
+              />
+            </div>
           </div>
-        </div>
+        </template>
       </div>
     </main>
 
@@ -140,6 +152,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import api, { getActiveUploadJob, stopUploadJob } from './api'
+import DocumentClusterView from './components/DocumentClusterView.vue'
 import FacetBar from './components/FacetBar.vue'
 import PIIDetailsModal from './components/PIIDetailsModal.vue'
 import ResultsList from './components/ResultsList.vue'
@@ -147,6 +160,35 @@ import ScanNotification from './components/ScanNotification.vue'
 import SearchForm from './components/SearchForm.vue'
 import UploadModal from './components/UploadModal.vue'
 import UploadProgressModal from './components/UploadProgressModal.vue'
+
+const currentView = ref('search') // 'search' or 'clusters'
+
+// View switching with URL state management (path-based routing)
+const switchView = (view) => {
+  currentView.value = view
+  const path = view === 'search' ? '/search' : '/clusters'
+  const url = new URL(window.location)
+  // Preserve query parameters (filters, similarTo, etc.)
+  window.history.pushState({}, '', path + url.search)
+}
+
+// Restore view from URL path
+const restoreViewFromURL = () => {
+  const pathname = window.location.pathname
+  if (pathname === '/clusters') {
+    currentView.value = 'clusters'
+  } else if (pathname === '/search' || pathname === '/') {
+    currentView.value = 'search'
+    // Redirect root to /search for consistency
+    if (pathname === '/') {
+      const url = new URL(window.location)
+      window.history.replaceState({}, '', '/search' + url.search)
+    }
+  } else {
+    // Unknown path, default to search
+    currentView.value = 'search'
+  }
+}
 
 const loading = ref(false)
 const results = ref([])
@@ -237,6 +279,12 @@ const activeFiltersLabel = computed(() => {
 
 // Load stats on mount and restore filter from URL
 onMounted(async () => {
+  // Restore view from URL first
+  restoreViewFromURL()
+  
+  // Handle browser back/forward buttons
+  window.addEventListener('popstate', restoreViewFromURL)
+  
   // Check for active upload job first
   await checkActiveUpload()
   
@@ -600,6 +648,15 @@ const handleSurpriseMe = async () => {
   } finally {
     loading.value = false
   }
+}
+
+// Handle view document from cluster visualization
+const handleViewDocumentFromCluster = async (documentId) => {
+  // Switch to search view
+  switchView('search')
+  
+  // Trigger find similar for the selected document
+  await handleFindSimilar(documentId)
 }
 
 // Restore random results from URL using seed
@@ -1200,6 +1257,12 @@ const handleClearFilter = async () => {
 
 .btn-add.uploading:hover {
   background: linear-gradient(90deg, #f57c00, #e65100);
+}
+
+.btn-secondary.active {
+  background: #2980b9;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(52, 152, 219, 0.3);
 }
 
 @keyframes pulse {

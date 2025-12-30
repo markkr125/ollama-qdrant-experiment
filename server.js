@@ -8,6 +8,7 @@ const pdf2md = require('@opendocsg/pdf2md');
 const TurndownService = require('turndown');
 const { QdrantClient } = require('@qdrant/js-client-rest');
 const { PIIDetectorFactory } = require('./pii-detector');
+const { VisualizationService } = require('./visualization-service');
 require('dotenv').config({ quiet: true });
 
 // Polyfill Promise.withResolvers for older Node.js versions
@@ -310,6 +311,16 @@ const upload = multer({
 
 // Initialize Qdrant client
 const qdrantClient = new QdrantClient({ url: QDRANT_URL });
+
+// Initialize Visualization Service
+const VIZ_CACHE_STRATEGY = process.env.VIZ_CACHE_STRATEGY || 'memory'; // 'memory' or 'redis'
+const visualizationService = new VisualizationService(
+  qdrantClient,
+  COLLECTION_NAME,
+  VIZ_CACHE_STRATEGY
+);
+
+console.log(`Visualization cache strategy: ${VIZ_CACHE_STRATEGY}`);
 
 /**
  * Get dense embedding from Ollama
@@ -1969,6 +1980,81 @@ function parseMetadataFromContent(filename, content, providedMetadata) {
   
   return metadata;
 }
+
+/**
+ * GET /api/visualize/scatter
+ * Get 2D scatter plot data for document visualization
+ */
+app.get('/api/visualize/scatter', async (req, res) => {
+  try {
+    const forceRefresh = req.query.refresh === 'true';
+    const limit = parseInt(req.query.limit) || 1000;
+
+    const data = await visualizationService.getScatterData({
+      forceRefresh,
+      limit
+    });
+
+    res.json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    console.error('Visualization error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/visualize/refresh
+ * Force refresh visualization cache
+ */
+app.post('/api/visualize/refresh', async (req, res) => {
+  try {
+    await visualizationService.clearCache();
+    
+    const data = await visualizationService.getScatterData({
+      forceRefresh: true,
+      limit: req.body.limit || 1000
+    });
+
+    res.json({
+      success: true,
+      message: 'Visualization cache refreshed',
+      data
+    });
+  } catch (error) {
+    console.error('Refresh error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/visualize/stats
+ * Get cache statistics
+ */
+app.get('/api/visualize/stats', async (req, res) => {
+  try {
+    const stats = await visualizationService.getCacheStats();
+    
+    res.json({
+      success: true,
+      stats
+    });
+  } catch (error) {
+    console.error('Stats error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
 // Start server
 app.listen(PORT, () => {
