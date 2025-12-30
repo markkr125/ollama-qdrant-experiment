@@ -329,60 +329,9 @@ const selectedPIITypes = computed(() => {
   return props.activeFilters.filter(f => f.type === 'pii_type').map(f => f.value)
 })
 
-// Compute facets from current results if available, otherwise show collection counts
+// Always show all collection-wide facets for better discoverability
+// Users can select any facet even when filters are active
 const facets = computed(() => {
-  // If we have results (like from Find Similar or Surprise Me), calculate from those
-  if (props.results.length > 0) {
-    const categoryCounts = {}
-    const locationCounts = {}
-    const tagCounts = {}
-    const piiTypeCounts = {}
-    
-    props.results.forEach(result => {
-      // Count categories
-      if (result.payload?.category) {
-        categoryCounts[result.payload.category] = (categoryCounts[result.payload.category] || 0) + 1
-      }
-      
-      // Count locations
-      if (result.payload?.location) {
-        locationCounts[result.payload.location] = (locationCounts[result.payload.location] || 0) + 1
-      }
-      
-      // Count tags
-      if (result.payload?.tags && Array.isArray(result.payload.tags)) {
-        result.payload.tags.forEach(tag => {
-          tagCounts[tag] = (tagCounts[tag] || 0) + 1
-        })
-      }
-      
-      // Count PII types from current results
-      if (result.payload?.pii_detected && result.payload.pii_types && Array.isArray(result.payload.pii_types)) {
-        result.payload.pii_types.forEach(type => {
-          piiTypeCounts[type] = (piiTypeCounts[type] || 0) + 1
-        })
-      }
-    })
-    
-    return {
-      categories: Object.entries(categoryCounts)
-        .map(([name, count]) => ({ name, count }))
-        .sort((a, b) => b.count - a.count),
-      locations: Object.entries(locationCounts)
-        .map(([name, count]) => ({ name, count }))
-        .sort((a, b) => b.count - a.count),
-      tags: Object.entries(tagCounts)
-        .map(([name, count]) => ({ name, count }))
-        .sort((a, b) => b.count - a.count),
-      // Always use collection-wide PII risk level stats
-      piiRiskLevels: allFacets.value.piiRiskLevels,
-      piiTypes: Object.entries(piiTypeCounts)
-        .map(([name, count]) => ({ name, count }))
-        .sort((a, b) => b.count - a.count)
-    }
-  }
-  
-  // Otherwise show collection-wide counts
   return allFacets.value
 })
 

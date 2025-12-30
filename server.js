@@ -1576,6 +1576,22 @@ app.post('/api/documents/upload', upload.array('files', 100), async (req, res) =
 });
 
 /**
+ * GET /api/upload-jobs/active
+ * Get the currently active upload job (if any)
+ * NOTE: Must come before /:jobId route to avoid matching "active" as a jobId
+ */
+app.get('/api/upload-jobs/active', (req, res) => {
+  // Find any job that's still processing
+  for (const job of uploadJobs.values()) {
+    if (job.status === 'processing') {
+      return res.json(job);
+    }
+  }
+  
+  res.json(null);
+});
+
+/**
  * GET /api/upload-jobs/:jobId
  * Get the status of an upload job
  */
@@ -1588,21 +1604,6 @@ app.get('/api/upload-jobs/:jobId', (req, res) => {
   }
   
   res.json(job);
-});
-
-/**
- * GET /api/upload-jobs/active
- * Get the currently active upload job (if any)
- */
-app.get('/api/upload-jobs/active', (req, res) => {
-  // Find any job that's still processing
-  for (const job of uploadJobs.values()) {
-    if (job.status === 'processing') {
-      return res.json(job);
-    }
-  }
-  
-  res.json(null);
 });
 
 /**

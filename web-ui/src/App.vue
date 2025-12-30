@@ -168,6 +168,66 @@ const hasActiveUpload = computed(() => !!activeJobId.value)
 const lastSearchParams = ref(null) // Track last search parameters
 const similarDocumentId = ref(null) // Track current Find Similar source document
 
+// Helper function to build filters with OR within type, AND between types
+const buildFiltersWithOr = () => {
+  if (activeFilters.value.length === 0) return undefined
+  
+  // Group filters by type
+  const filtersByType = {
+    category: [],
+    location: [],
+    tag: []
+  }
+  
+  activeFilters.value.forEach(f => {
+    if (filtersByType[f.type]) {
+      filtersByType[f.type].push(f.value)
+    }
+  })
+  
+  const must = []
+  
+  // Category filters (OR within category)
+  if (filtersByType.category.length > 0) {
+    if (filtersByType.category.length === 1) {
+      must.push({
+        key: 'category',
+        match: { value: filtersByType.category[0] }
+      })
+    } else {
+      must.push({
+        key: 'category',
+        match: { any: filtersByType.category }
+      })
+    }
+  }
+  
+  // Location filters (OR within location)
+  if (filtersByType.location.length > 0) {
+    if (filtersByType.location.length === 1) {
+      must.push({
+        key: 'location',
+        match: { value: filtersByType.location[0] }
+      })
+    } else {
+      must.push({
+        key: 'location',
+        match: { any: filtersByType.location }
+      })
+    }
+  }
+  
+  // Tag filters (OR within tags)
+  if (filtersByType.tag.length > 0) {
+    must.push({
+      key: 'tags',
+      match: { any: filtersByType.tag }
+    })
+  }
+  
+  return must.length > 0 ? { must } : undefined
+}
+
 // Computed label for active filters
 const activeFiltersLabel = computed(() => {
   if (activeFilters.value.length === 0) return null
@@ -194,6 +254,13 @@ onMounted(async () => {
   if (similarTo) {
     await handleFindSimilar(similarTo)
     return // Exit early, don't process filters
+  }
+  
+  // Check for random parameter to restore Surprise Me results
+  const randomIds = url.searchParams.get('random')
+  if (randomIds) {
+    await restoreRandomResults(randomIds)
+    return // Exit early
   }
   
   // Restore filters from URL
@@ -464,9 +531,40 @@ const handleSurpriseMe = async () => {
     
     results.value = response.data.results || []
     totalResults.value = response.data.total || results.value.length
+    
+    // Save document IDs to URL for persistence on refresh
+    const docIds = results.value.map(r => r.id).join(',')
+    const url = new URL(window.location)
+    url.searchParams.set('random', docIds)
+    window.history.pushState({}, '', url)
   } catch (error) {
     console.error('Surprise me error:', error)
     alert('Failed to get random documents: ' + (error.response?.data?.error || error.message))
+  } finally {
+    loading.value = false
+  }
+}
+
+// Restore random results from URL
+const restoreRandomResults = async (docIds) => {
+  loading.value = true
+  currentQuery.value = 'Random Discovery'
+  searchType.value = 'random'
+  results.value = []
+  
+  try {
+    const ids = docIds.split(',')
+    const promises = ids.map(id => api.get(`/document/${id}`))
+    const responses = await Promise.all(promises)
+    
+    results.value = responses.map(r => r.data)
+    totalResults.value = results.value.length
+  } catch (error) {
+    console.error('Failed to restore random results:', error)
+    // On error, clear the invalid parameter and show nothing
+    const url = new URL(window.location)
+    url.searchParams.delete('random')
+    window.history.replaceState({}, '', url)
   } finally {
     loading.value = false
   }
@@ -591,8 +689,7 @@ const handleFilterCategory = async (category) => {
     // Remove if already selected (toggle)
     activeFilters.value.splice(existingIndex, 1)
   } else {
-    // Remove any existing category filter and add new one
-    activeFilters.value = activeFilters.value.filter(f => f.type !== 'category')
+    // Allow multiple categories (OR logic)
     activeFilters.value.push({ type: 'category', value: category })
   }
   
@@ -601,19 +698,14 @@ const handleFilterCategory = async (category) => {
   url.searchParams.set('filters', JSON.stringify(activeFilters.value))
   window.history.pushState({}, '', url)
   
-  // Build filters for search
-  const filters = {
-    must: activeFilters.value.map(f => ({
-      key: f.type === 'tag' ? 'tags' : f.type,
-      match: f.type === 'tag' ? { any: [f.value] } : { value: f.value }
-    }))
-  }
+  // Build filters for search with OR within type, AND between types
+  const filters = buildFiltersWithOr()
   
   // If there's an existing search, add filters to it
   if (lastSearchParams.value && lastSearchParams.value.query) {
     const searchParams = {
       ...lastSearchParams.value,
-      filters: filters.must.length > 0 ? filters : undefined
+      filters
     }
     const filterText = activeFilters.value.length > 0 ? ` (${activeFilters.value.map(f => f.value).join(', ')})` : ''
     currentQuery.value = `${lastSearchParams.value.query}${filterText}`
@@ -646,7 +738,7 @@ const handleFilterLocation = async (location) => {
   if (existingIndex >= 0) {
     activeFilters.value.splice(existingIndex, 1)
   } else {
-    activeFilters.value = activeFilters.value.filter(f => f.type !== 'location')
+    // Allow multiple locations (OR logic)
     activeFilters.value.push({ type: 'location', value: location })
   }
   
@@ -654,17 +746,12 @@ const handleFilterLocation = async (location) => {
   url.searchParams.set('filters', JSON.stringify(activeFilters.value))
   window.history.pushState({}, '', url)
   
-  const filters = {
-    must: activeFilters.value.map(f => ({
-      key: f.type === 'tag' ? 'tags' : f.type,
-      match: f.type === 'tag' ? { any: [f.value] } : { value: f.value }
-    }))
-  }
+  const filters = buildFiltersWithOr()
   
   if (lastSearchParams.value && lastSearchParams.value.query) {
     const searchParams = {
       ...lastSearchParams.value,
-      filters: filters.must.length > 0 ? filters : undefined
+      filters
     }
     const filterText = activeFilters.value.length > 0 ? ` (${activeFilters.value.map(f => f.value).join(', ')})` : ''
     currentQuery.value = `${lastSearchParams.value.query}${filterText}`
@@ -703,17 +790,12 @@ const handleFilterTag = async (tag) => {
   url.searchParams.set('filters', JSON.stringify(activeFilters.value))
   window.history.pushState({}, '', url)
   
-  const filters = {
-    must: activeFilters.value.map(f => ({
-      key: f.type === 'tag' ? 'tags' : f.type,
-      match: f.type === 'tag' ? { any: [f.value] } : { value: f.value }
-    }))
-  }
+  const filters = buildFiltersWithOr()
   
   if (lastSearchParams.value && lastSearchParams.value.query) {
     const searchParams = {
       ...lastSearchParams.value,
-      filters: filters.must.length > 0 ? filters : undefined
+      filters
     }
     const filterText = activeFilters.value.length > 0 ? ` (${activeFilters.value.map(f => f.value).join(', ')})` : ''
     currentQuery.value = `${lastSearchParams.value.query}${filterText}`
