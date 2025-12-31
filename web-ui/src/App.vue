@@ -328,6 +328,7 @@ onMounted(async () => {
   const weightParam = url.searchParams.get('weight')
   const limitParam = url.searchParams.get('limit')
   const pageParam = url.searchParams.get('page')
+  const selectionParam = url.searchParams.get('selection')
   
   if (filtersParam) {
     try {

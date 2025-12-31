@@ -432,6 +432,11 @@ const updateURL = (searchParams) => {
     params.set('similarTo', currentUrl.get('similarTo'))
   }
   
+  // Preserve selection parameter (set by cluster visualization)
+  if (currentUrl.has('selection')) {
+    params.set('selection', currentUrl.get('selection'))
+  }
+  
   window.history.pushState({}, '', '?' + params.toString())
 }
 

@@ -336,11 +336,21 @@ class VisualizationService {
       console.log('[Viz] Running UMAP reduction...');
       const umapStart = Date.now();
       
+      // Create seeded random number generator for deterministic layout
+      const seededRandom = (seed = 42) => {
+        let state = seed;
+        return () => {
+          state = (state * 1103515245 + 12345) & 0x7fffffff;
+          return state / 0x7fffffff;
+        };
+      };
+      
       const umap = new UMAP({
         nComponents: 2,
         nNeighbors: Math.min(15, Math.floor(points.length / 2)),
         minDist: 0.1,
-        spread: 1.0
+        spread: 1.0,
+        random: seededRandom(12345)  // Fixed seed for consistent full collection layout
       });
 
       const embedding = await umap.fitAsync(vectors);
@@ -505,11 +515,25 @@ class VisualizationService {
       const umapStart = Date.now();
 
       // 3. Run UMAP dimensionality reduction
+      // Use hash-based seed for deterministic layout per search
+      const searchHash = this.hashSearchParams(searchParams);
+      const seedValue = parseInt(searchHash.substring(0, 8), 16);
+      
+      // Create seeded random number generator
+      const seededRandom = (seed) => {
+        let state = seed;
+        return () => {
+          state = (state * 1103515245 + 12345) & 0x7fffffff;
+          return state / 0x7fffffff;
+        };
+      };
+      
       const umap = new UMAP({
         nComponents: 2,
         nNeighbors: Math.min(15, Math.floor(vectors.length / 2)),
         minDist: 0.1,
-        spread: 1.0
+        spread: 1.0,
+        random: seededRandom(seedValue)  // Deterministic seed based on search parameters
       });
 
       const embedding = await umap.fitAsync(vectors);

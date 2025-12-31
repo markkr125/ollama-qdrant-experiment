@@ -622,6 +622,12 @@ const loadClusterVisualization = async (forceRefresh = false) => {
     
     const result = await response.json()
     clusterData.value = result.data  // Extract the data property from the response
+    
+    // After visualization loads, check if there's a selection in URL to restore
+    // Wait a bit longer for the plot to fully render
+    setTimeout(() => {
+      restoreSelectionFromURL()
+    }, 500)
   } catch (error) {
     console.error('Cluster visualization error:', error)
     clusterError.value = error.message || 'Failed to load cluster visualization'
@@ -647,18 +653,18 @@ const handleClusterPointClick = (point) => {
   
   if (docIndex !== -1) {
     scrollToResult(docId)
-  } else {
-    // Document not on current page - could navigate or show message
-    console.log('Document not on current page:', docId)
   }
 }
 
-const handleClusterSelection = (points) => {
-  console.log('Selection received:', points)
+const handleClusterSelection = (points, geometry) => {
   if (!points || points.length === 0) {
     clusterSelectedPoints.value = []
     // Clear the ID filter - refresh to show all results
     emit('filter-by-ids', [])
+    // Remove selection from URL
+    const url = new URL(window.location)
+    url.searchParams.delete('selection')
+    window.history.replaceState({}, '', url)
     return
   }
   clusterSelectedPoints.value = points.map(p => ({
@@ -666,11 +672,36 @@ const handleClusterSelection = (points) => {
     title: p.title || 'Untitled',
     category: p.category
   })).filter(p => p.id)
-  console.log('Processed selection:', clusterSelectedPoints.value)
   
   // Emit event to trigger search with only selected IDs
   const selectedIds = clusterSelectedPoints.value.map(p => p.id)
   emit('filter-by-ids', selectedIds)
+  
+  // Store selection geometry in URL
+  if (geometry) {
+    const url = new URL(window.location)
+    let selectionParam = ''
+    
+    if (geometry.type === 'box' && geometry.range) {
+      // Box: store as "box:x0,y0,x1,y1"
+      const x0 = geometry.range.x[0].toFixed(2)
+      const y0 = geometry.range.y[0].toFixed(2)
+      const x1 = geometry.range.x[1].toFixed(2)
+      const y1 = geometry.range.y[1].toFixed(2)
+      selectionParam = `box:${x0},${y0},${x1},${y1}`
+    } else if (geometry.type === 'lasso' && geometry.lassoPoints) {
+      // Lasso: store as "lasso:x1,y1,x2,y2,..." (simplified/decimated if too long)
+      const xCoords = geometry.lassoPoints.x.map(x => x.toFixed(2))
+      const yCoords = geometry.lassoPoints.y.map(y => y.toFixed(2))
+      const coords = xCoords.map((x, i) => `${x},${yCoords[i]}`).join(',')
+      selectionParam = `lasso:${coords}`
+    }
+    
+    if (selectionParam) {
+      url.searchParams.set('selection', selectionParam)
+      window.history.replaceState({}, '', url)
+    }
+  }
 }
 
 const scrollToResult = (docId) => {
@@ -695,6 +726,47 @@ const clearClusterSelection = () => {
   // Clear the visual selection in the plot
   if (scatterPlotRef.value) {
     scatterPlotRef.value.clearSelection()
+  }
+  // Remove from URL
+  const url = new URL(window.location)
+  url.searchParams.delete('selection')
+  window.history.replaceState({}, '', url)
+}
+
+const restoreSelectionFromURL = async () => {
+  const url = new URL(window.location)
+  const selectionParam = url.searchParams.get('selection')
+  
+  if (!selectionParam || !scatterPlotRef.value) return
+  
+  try {
+    const [type, coordsStr] = selectionParam.split(':')
+    
+    if (type === 'box') {
+      // Parse box: "x0,y0,x1,y1"
+      const [x0, y0, x1, y1] = coordsStr.split(',').map(parseFloat)
+      const geometry = {
+        type: 'box',
+        range: { x: [x0, x1], y: [y0, y1] }
+      }
+      await scatterPlotRef.value.applySelection(geometry)
+    } else if (type === 'lasso') {
+      // Parse lasso: "x1,y1,x2,y2,..."
+      const coords = coordsStr.split(',').map(parseFloat)
+      const xCoords = []
+      const yCoords = []
+      for (let i = 0; i < coords.length; i += 2) {
+        xCoords.push(coords[i])
+        yCoords.push(coords[i + 1])
+      }
+      const geometry = {
+        type: 'lasso',
+        lassoPoints: { x: xCoords, y: yCoords }
+      }
+      await scatterPlotRef.value.applySelection(geometry)
+    }
+  } catch (error) {
+    console.error('Failed to restore selection from URL:', error)
   }
 }
 
@@ -729,6 +801,23 @@ watch(
       clusterSelectedPoints.value = []
     }
   }
+)
+
+// Check for selection parameter on mount - auto-show visualization if present
+watch(
+  () => props.results,
+  (newResults) => {
+    if (newResults && newResults.length > 0) {
+      const url = new URL(window.location)
+      const selectionParam = url.searchParams.get('selection')
+      
+      // If there's a selection in URL and visualization isn't shown, show it
+      if (selectionParam && !showClusterView.value) {
+        toggleClusterView()
+      }
+    }
+  },
+  { immediate: true }
 )</script>
 
 <style scoped>
