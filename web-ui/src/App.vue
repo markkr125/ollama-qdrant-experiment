@@ -153,7 +153,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import api, { getActiveUploadJob, stopUploadJob } from './api'
 import DocumentClusterView from './components/DocumentClusterView.vue'
 import FacetBar from './components/FacetBar.vue'
@@ -176,7 +176,7 @@ const switchView = (view) => {
 }
 
 // Restore view from URL path
-const restoreViewFromURL = () => {
+const restoreViewFromURL = async () => {
   const pathname = window.location.pathname
   if (pathname === '/clusters') {
     currentView.value = 'clusters'
@@ -187,9 +187,147 @@ const restoreViewFromURL = () => {
       const url = new URL(window.location)
       window.history.replaceState({}, '', '/search' + url.search)
     }
+    
+    // Restore search state from URL parameters
+    await restoreSearchFromURL()
   } else {
     // Unknown path, default to search
     currentView.value = 'search'
+  }
+}
+
+const restoreSearchFromURL = async () => {
+  const url = new URL(window.location)
+  
+  // Clean up old 'random' parameter if it exists (from previous version)
+  if (url.searchParams.has('random')) {
+    url.searchParams.delete('random')
+    window.history.replaceState({}, '', url)
+  }
+  
+  // Check for similarTo parameter first
+  const similarTo = url.searchParams.get('similarTo')
+  if (similarTo) {
+    await handleFindSimilar(similarTo)
+    return // Exit early, don't process filters
+  }
+  
+  // Check for randomSeed parameter to restore Surprise Me results
+  const randomSeed = url.searchParams.get('randomSeed')
+  if (randomSeed && randomSeed !== 'null') {
+    await restoreRandomResults(randomSeed)
+    return // Exit early
+  }
+  
+  // Restore filters from URL
+  const filtersParam = url.searchParams.get('filters')
+  const queryParam = url.searchParams.get('q')
+  const typeParam = url.searchParams.get('type')
+  const weightParam = url.searchParams.get('weight')
+  const limitParam = url.searchParams.get('limit')
+  const pageParam = url.searchParams.get('page')
+  const selectionParam = url.searchParams.get('selection')
+  
+  // Build filters object if filtersParam exists
+  let filters = {}
+  
+  if (filtersParam) {
+    try {
+      const parsedFilters = JSON.parse(filtersParam)
+      if (Array.isArray(parsedFilters) && parsedFilters.length > 0) {
+        activeFilters.value = parsedFilters
+        
+        // Separate never_scanned from other filters
+        const neverScannedFilter = activeFilters.value.find(f => f.type === 'pii_risk' && f.value === 'never_scanned')
+        const otherFilters = activeFilters.value.filter(f => !(f.type === 'pii_risk' && f.value === 'never_scanned'))
+        
+        const mustFilters = otherFilters.map(f => {
+          if (f.type === 'pii_risk') {
+            if (f.value === 'none') {
+              return { key: 'pii_detected', match: { value: false } }
+            } else {
+              return { key: 'pii_risk_level', match: { value: f.value } }
+            }
+          } else if (f.type === 'tag') {
+            return { key: 'tags', match: { any: [f.value] } }
+          } else if (f.type === 'pii_type') {
+            return { key: 'pii_types', match: { any: [f.value] } }
+          } else {
+            return { key: f.type, match: { value: f.value } }
+          }
+        })
+        
+        if (mustFilters.length > 0) {
+          filters.must = mustFilters
+        }
+        
+        // Add never_scanned filter as must_not
+        if (neverScannedFilter) {
+          filters.must_not = [
+            { key: 'pii_detected', match: { value: true } },
+            { key: 'pii_detected', match: { value: false } }
+          ]
+        }
+      }
+    } catch (error) {
+      console.error('Failed to parse filters from URL:', error)
+    }
+  } else {
+    // No filters in URL - clear activeFilters
+    activeFilters.value = []
+  }
+  
+  // Execute search if there's a query parameter
+  if (queryParam && queryParam.trim()) {
+    // Search with query (and optionally filters)
+    const filterText = activeFilters.value.length > 0 ? ` (${activeFilters.value.map(f => f.value).join(', ')})` : ''
+    currentQuery.value = `${queryParam}${filterText}`
+    searchType.value = typeParam || 'hybrid'
+    
+    const searchParams = {
+      searchType: typeParam || 'hybrid',
+      query: queryParam,
+      limit: parseInt(limitParam) || 10,
+      page: parseInt(pageParam) || 1,
+      denseWeight: parseFloat(weightParam) || 0.7,
+      filters: Object.keys(filters).length > 0 ? filters : undefined
+    }
+    await handleSearch(searchParams)
+    
+    // Handle selection parameter
+    if (selectionParam) {
+      // Selection exists - trigger restoration after search completes
+      await nextTick()
+      window.dispatchEvent(new CustomEvent('restore-selection', { detail: { selectionParam } }))
+    } else {
+      // No selection in URL - clear any existing selection
+      await nextTick()
+      window.dispatchEvent(new CustomEvent('clear-selection'))
+    }
+  } else if (filtersParam) {
+    // Filter-only search (no query, but has filters)
+    currentQuery.value = activeFilters.value.map(f => `${f.value}`).join(', ')
+    searchType.value = 'facet'
+    
+    const searchParams = {
+      searchType: 'semantic',
+      query: '',
+      limit: parseInt(limitParam) || 10,
+      page: parseInt(pageParam) || 1,
+      filters: Object.keys(filters).length > 0 ? filters : undefined
+    }
+    await handleSearch(searchParams)
+    
+    // Handle selection parameter
+    if (selectionParam) {
+      // Selection exists - trigger restoration after search completes
+      await nextTick()
+      window.dispatchEvent(new CustomEvent('restore-selection', { detail: { selectionParam } }))
+    } else {
+      // No selection in URL - clear any existing selection
+      await nextTick()
+      window.dispatchEvent(new CustomEvent('clear-selection'))
+    }
   }
 }
 
@@ -282,13 +420,13 @@ const activeFiltersLabel = computed(() => {
 
 // Load stats on mount and restore filter from URL
 onMounted(async () => {
-  // Restore view from URL first
-  restoreViewFromURL()
+  // Restore view and search state from URL
+  await restoreViewFromURL()
   
   // Handle browser back/forward buttons
   window.addEventListener('popstate', restoreViewFromURL)
   
-  // Check for active upload job first
+  // Check for active upload job
   await checkActiveUpload()
   
   try {
@@ -296,116 +434,6 @@ onMounted(async () => {
     stats.value = response.data
   } catch (error) {
     console.error('Failed to load stats:', error)
-  }
-  
-  // Restore from URL
-  const url = new URL(window.location)
-  
-  // Clean up old 'random' parameter if it exists (from previous version)
-  if (url.searchParams.has('random')) {
-    url.searchParams.delete('random')
-    window.history.replaceState({}, '', url)
-  }
-  
-  // Check for similarTo parameter first
-  const similarTo = url.searchParams.get('similarTo')
-  if (similarTo) {
-    await handleFindSimilar(similarTo)
-    return // Exit early, don't process filters
-  }
-  
-  // Check for randomSeed parameter to restore Surprise Me results
-  const randomSeed = url.searchParams.get('randomSeed')
-  if (randomSeed && randomSeed !== 'null') {
-    await restoreRandomResults(randomSeed)
-    return // Exit early
-  }
-  
-  // Restore filters from URL
-  const filtersParam = url.searchParams.get('filters')
-  const queryParam = url.searchParams.get('q')
-  const typeParam = url.searchParams.get('type')
-  const weightParam = url.searchParams.get('weight')
-  const limitParam = url.searchParams.get('limit')
-  const pageParam = url.searchParams.get('page')
-  const selectionParam = url.searchParams.get('selection')
-  
-  if (filtersParam) {
-    try {
-      const parsedFilters = JSON.parse(filtersParam)
-      if (Array.isArray(parsedFilters) && parsedFilters.length > 0) {
-        activeFilters.value = parsedFilters
-        
-        // Separate never_scanned from other filters
-        const neverScannedFilter = activeFilters.value.find(f => f.type === 'pii_risk' && f.value === 'never_scanned')
-        const otherFilters = activeFilters.value.filter(f => !(f.type === 'pii_risk' && f.value === 'never_scanned'))
-        
-        // Build filters for search
-        let filters = {}
-        
-        const mustFilters = otherFilters.map(f => {
-          if (f.type === 'pii_risk') {
-            if (f.value === 'none') {
-              return { key: 'pii_detected', match: { value: false } }
-            } else {
-              return { key: 'pii_risk_level', match: { value: f.value } }
-            }
-          } else if (f.type === 'tag') {
-            return { key: 'tags', match: { any: [f.value] } }
-          } else if (f.type === 'pii_type') {
-            return { key: 'pii_types', match: { any: [f.value] } }
-          } else {
-            return { key: f.type, match: { value: f.value } }
-          }
-        })
-        
-        if (mustFilters.length > 0) {
-          filters.must = mustFilters
-        }
-        
-        // Add never_scanned filter as must_not
-        if (neverScannedFilter) {
-          filters.must_not = [
-            { key: 'pii_detected', match: { value: true } },
-            { key: 'pii_detected', match: { value: false } }
-          ]
-        }
-        
-        // Execute the search with filters
-        // If there's a query, use it; otherwise it's a filter-only search
-        if (queryParam && queryParam.trim()) {
-          // Search with query and filters
-          const filterText = activeFilters.value.length > 0 ? ` (${activeFilters.value.map(f => f.value).join(', ')})` : ''
-          currentQuery.value = `${queryParam}${filterText}`
-          searchType.value = typeParam || 'hybrid'
-          
-          const searchParams = {
-            searchType: typeParam || 'hybrid',
-            query: queryParam,
-            limit: parseInt(limitParam) || 10,
-            page: parseInt(pageParam) || 1,
-            denseWeight: parseFloat(weightParam) || 0.7,
-            filters
-          }
-          await handleSearch(searchParams)
-        } else {
-          // Filter-only search
-          currentQuery.value = activeFilters.value.map(f => `${f.value}`).join(', ')
-          searchType.value = 'facet'
-          
-          const searchParams = {
-            searchType: 'semantic',
-            query: '',
-            limit: parseInt(limitParam) || 10,
-            page: parseInt(pageParam) || 1,
-            filters
-          }
-          await handleSearch(searchParams)
-        }
-      }
-    } catch (error) {
-      console.error('Failed to parse filters from URL:', error)
-    }
   }
 })
 

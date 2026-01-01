@@ -483,7 +483,8 @@ const loadFromURL = () => {
   }
   
   // If URL has query, auto-search (but skip if similarTo is present, as App.vue handles that)
-  if (params.has('q') && query.value.trim() && !params.has('similarTo')) {
+  // Also skip if filters parameter is present, as App.vue handles facet filter restoration
+  if (params.has('q') && query.value.trim() && !params.has('similarTo') && !params.has('filters')) {
     handleSubmit()
   }
 }

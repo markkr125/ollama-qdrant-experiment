@@ -367,7 +367,7 @@
 
 <script setup>
 import { marked } from 'marked'
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import api from '../api'
 import ScatterPlot from './ScatterPlot.vue'
 
@@ -818,7 +818,50 @@ watch(
     }
   },
   { immediate: true }
-)</script>
+)
+
+// Listen for custom event to restore selection (triggered by browser back/forward)
+onMounted(() => {
+  const handleRestoreSelection = async (event) => {
+    // Always ensure visualization is shown
+    if (!showClusterView.value) {
+      toggleClusterView()
+      // Wait for visualization to load before restoring selection
+      return
+    }
+    
+    // Visualization is already showing
+    if (clusterData.value) {
+      // Restore selection immediately
+      await nextTick()
+      setTimeout(() => restoreSelectionFromURL(), 300)
+    }
+    // If clusterData doesn't exist yet, the selection will be restored
+    // when loadClusterVisualization completes (it calls restoreSelectionFromURL)
+  }
+  
+  const handleClearSelection = () => {
+    // Clear selection state
+    clusterSelectedPoints.value = []
+    emit('filter-by-ids', [])
+    
+    // Hide the visualization when selection is cleared via browser navigation
+    if (showClusterView.value) {
+      showClusterView.value = false
+      clusterData.value = null
+    }
+  }
+  
+  window.addEventListener('restore-selection', handleRestoreSelection)
+  window.addEventListener('clear-selection', handleClearSelection)
+  
+  // Cleanup on unmount
+  onUnmounted(() => {
+    window.removeEventListener('restore-selection', handleRestoreSelection)
+    window.removeEventListener('clear-selection', handleClearSelection)
+  })
+})
+</script>
 
 <style scoped>
 .results-list {

@@ -993,10 +993,10 @@ app.post('/api/search/hybrid', async (req, res) => {
     
     // Debug: Log filters
     if (filters) {
-      console.log('Hybrid search filters:', JSON.stringify(filters, null, 2));
+     // console.log('Hybrid search filters:', JSON.stringify(filters, null, 2));
     }
     if (documentIds) {
-      console.log('Hybrid search documentIds:', documentIds);
+      //console.log('Hybrid search documentIds:', documentIds);
     }
     
     if (!query) {

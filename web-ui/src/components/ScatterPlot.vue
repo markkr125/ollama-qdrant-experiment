@@ -304,7 +304,13 @@ const applySelection = async (geometry, retries = 3) => {
         
         // Emit selection change with the selected points
         const selected = selectedIndices.map(idx => plotContainer.value.data[0].customdata[idx]);
-        plotContainer.value.emit('plotly_selected', { points: selected.map(data => ({ customdata: data })) });
+        
+        // Trigger the plotly_selected event with proper format including geometry
+        const eventData = {
+          points: selected.map(data => ({ customdata: data })),
+          range: geometry.range  // Include the selection range for the event listener
+        };
+        plotContainer.value.emit('plotly_selected', eventData);
       }
     } else if (geometry.type === 'lasso' && geometry.lassoPoints) {
       // For lasso, we'd need to use a point-in-polygon algorithm
