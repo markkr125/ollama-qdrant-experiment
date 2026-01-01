@@ -8,13 +8,35 @@
       <select v-model="searchType" class="select">
         <option value="hybrid">Hybrid (Semantic + Keywords)</option>
         <option value="semantic">Semantic Only</option>
+        <option value="by-document">By Document (Upload File)</option>
         <option value="location">Location-Based</option>
         <option value="geo">Geo-Radius</option>
       </select>
     </div>
 
+    <!-- File Upload (for by-document search) -->
+    <div v-if="searchType === 'by-document'" class="form-group">
+      <label class="label">Upload Document</label>
+      <div class="file-upload-area">
+        <input 
+          type="file"
+          ref="fileInput"
+          @change="handleFileSelect"
+          accept=".txt,.md,.pdf,.docx"
+          class="file-input"
+          id="search-file-input"
+        >
+        <label for="search-file-input" class="file-upload-label">
+          <span class="upload-icon">📄</span>
+          <span v-if="!selectedFile" class="upload-text">Choose file to find similar documents</span>
+          <span v-else class="upload-text selected">{{ selectedFile.name }}</span>
+          <span class="upload-hint">Supports: TXT, MD, PDF, DOCX</span>
+        </label>
+      </div>
+    </div>
+
     <!-- Query Input -->
-    <div class="form-group">
+    <div v-if="searchType !== 'by-document'" class="form-group">
       <label class="label">Search Query</label>
       <textarea 
         v-model="query"
@@ -231,6 +253,8 @@ const radius = ref(50000)
 const limit = ref(10)
 const currentPage = ref(1)
 const showFilters = ref(false)
+const selectedFile = ref(null)
+const fileInput = ref(null)
 
 // Filters
 const filters = ref({
@@ -248,6 +272,9 @@ const availableLocations = computed(() => props.stats?.locations || [])
 
 // Validation
 const canSubmit = computed(() => {
+  if (searchType.value === 'by-document') {
+    return selectedFile.value !== null
+  }
   if (!query.value.trim()) return false
   if (searchType.value === 'location' && !location.value) return false
   if (searchType.value === 'geo') {
@@ -255,6 +282,14 @@ const canSubmit = computed(() => {
   }
   return true
 })
+
+// Handle file selection
+const handleFileSelect = (event) => {
+  const file = event.target.files[0]
+  if (file) {
+    selectedFile.value = file
+  }
+}
 
 // Build filter object for API
 const buildFilters = () => {
@@ -308,10 +343,17 @@ const handleSubmit = (resetPage = true) => {
   }
   
   const searchParams = {
-    query: query.value.trim(),
     searchType: searchType.value,
     limit: limit.value,
     page: currentPage.value
+  }
+  
+  // Handle by-document search differently
+  if (searchType.value === 'by-document') {
+    searchParams.file = selectedFile.value
+    searchParams.query = selectedFile.value.name  // For display purposes
+  } else {
+    searchParams.query = query.value.trim()
   }
   
   if (searchType.value === 'hybrid') {
@@ -337,7 +379,9 @@ const handleSubmit = (resetPage = true) => {
   }
   
   emit('search', searchParams)
-  updateURL(searchParams)
+  if (searchType.value !== 'by-document') {
+    updateURL(searchParams)
+  }
 }
 
 // Clear search
@@ -351,6 +395,10 @@ const handleClear = () => {
   radius.value = 50000
   limit.value = 10
   currentPage.value = 1
+  selectedFile.value = null
+  if (fileInput.value) {
+    fileInput.value.value = ''
+  }
   filters.value = {
     category: '',
     minPrice: null,
@@ -365,6 +413,16 @@ const handleClear = () => {
   
   emit('clear')
 }
+
+// Watch search type to clear file when switching away from by-document
+watch(searchType, (newType, oldType) => {
+  if (oldType === 'by-document' && newType !== 'by-document') {
+    selectedFile.value = null
+    if (fileInput.value) {
+      fileInput.value.value = ''
+    }
+  }
+})
 
 // Pagination handlers
 const goToPage = (page) => {
@@ -622,4 +680,51 @@ watch(searchType, () => {
   display: flex;
   gap: 0.75rem;
   margin-bottom: 0.5rem;
-}</style>
+}
+
+/* File upload styling */
+.file-upload-area {
+  margin-top: 0.5rem;
+}
+
+.file-input {
+  display: none;
+}
+
+.file-upload-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 2rem;
+  border: 2px dashed var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.file-upload-label:hover {
+  border-color: var(--primary-color);
+  background: var(--bg-color);
+}
+
+.upload-icon {
+  font-size: 3rem;
+}
+
+.upload-text {
+  color: var(--text-secondary);
+  font-size: 0.95rem;
+}
+
+.upload-text.selected {
+  color: var(--primary-color);
+  font-weight: 600;
+}
+
+.upload-hint {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+</style>

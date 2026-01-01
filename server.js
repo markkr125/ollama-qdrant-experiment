@@ -1360,6 +1360,118 @@ app.post('/api/recommend', async (req, res) => {
 });
 
 /**
+ * POST /api/search/by-document
+ * Search for similar documents by uploading a file
+ * This is like "find similar" but without saving the document
+ */
+app.post('/api/search/by-document', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const file = req.file;
+    const limit = parseInt(req.body.limit) || 10;
+    const offset = parseInt(req.body.offset) || 0;
+    
+    console.log(`Processing uploaded file for search: ${file.originalname}`);
+
+    // Extract text from the uploaded file
+    let content = '';
+    const fileExt = file.originalname.split('.').pop().toLowerCase();
+    
+    try {
+      if (fileExt === 'txt' || fileExt === 'md') {
+        content = file.buffer.toString('utf-8');
+      } else if (fileExt === 'pdf') {
+        // Use the same PDF extraction logic as the main upload
+        try {
+          content = await pdfToMarkdownViaHtml(file.buffer);
+        } catch (htmlError) {
+          console.warn('PDF via HTML conversion failed, trying @opendocsg/pdf2md:', htmlError.message);
+          try {
+            content = await pdf2md(file.buffer);
+          } catch (pdf2mdError) {
+            console.warn('pdf2md failed, using basic text extraction:', pdf2mdError.message);
+            const pdfData = await pdfParse(file.buffer);
+            content = processPdfText(pdfData.text);
+          }
+        }
+      } else if (fileExt === 'docx') {
+        // Use markdown conversion for better structure preservation
+        const result = await mammoth.convertToMarkdown({ buffer: file.buffer });
+        content = result.value;
+      } else {
+        return res.status(400).json({ 
+          error: `Unsupported file type: ${fileExt}. Supported: txt, md, pdf, docx` 
+        });
+      }
+    } catch (extractError) {
+      console.error('Text extraction error:', extractError);
+      return res.status(500).json({ 
+        error: 'Failed to extract text from file',
+        details: extractError.message 
+      });
+    }
+
+    if (!content || content.trim().length === 0) {
+      return res.status(400).json({ error: 'No text content found in file' });
+    }
+
+    console.log(`Extracted ${content.length} characters from ${file.originalname}`);
+
+    // Generate embedding for the content
+    let embedding;
+    try {
+      embedding = await getDenseEmbedding(content);
+      if (!embedding) {
+        throw new Error('Failed to generate embedding');
+      }
+    } catch (embeddingError) {
+      console.error('Embedding generation error:', embeddingError);
+      return res.status(500).json({ 
+        error: 'Failed to generate embedding',
+        details: embeddingError.message 
+      });
+    }
+
+    // Search for similar documents using the embedding
+    const totalToFetch = limit + offset;
+    const searchResults = await qdrantClient.search(COLLECTION_NAME, {
+      vector: {
+        name: 'dense',
+        vector: embedding
+      },
+      limit: totalToFetch,
+      with_payload: true,
+      with_vector: false
+    });
+
+    // Apply pagination
+    const paginatedResults = searchResults.slice(offset, offset + limit);
+
+    res.json({
+      searchType: 'by-document',
+      sourceFile: file.originalname,
+      contentLength: content.length,
+      total: searchResults.length,
+      results: paginatedResults.map(r => ({
+        id: r.id,
+        score: r.score,
+        payload: r.payload
+      }))
+    });
+
+  } catch (error) {
+    console.error('Search by document error:', error);
+    res.status(500).json({ 
+      error: error.message,
+      details: 'Failed to search by document'
+    });
+  }
+});
+
+/**
  * GET /api/random
  * Get random documents from the collection
  */

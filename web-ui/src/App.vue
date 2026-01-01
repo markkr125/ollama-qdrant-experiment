@@ -469,6 +469,21 @@ const handleSearch = async (searchParams) => {
     const offset = ((searchParams.page || 1) - 1) * searchParams.limit
     
     switch (searchParams.searchType) {
+      case 'by-document':
+        // Handle file upload search
+        const formData = new FormData()
+        formData.append('file', searchParams.file)
+        formData.append('limit', searchParams.limit)
+        formData.append('offset', offset)
+        
+        response = await api.post('/search/by-document', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data'
+          }
+        })
+        currentQuery.value = `📄 ${searchParams.file.name}`
+        break
+        
       case 'semantic':
         response = await api.post('/search/semantic', {
           query: searchParams.query,
