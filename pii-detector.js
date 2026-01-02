@@ -503,7 +503,56 @@ If no PII found, return exactly: []`;
       // Parse JSON response
       const jsonMatch = responseText.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
-        const findings = JSON.parse(jsonMatch[0]);
+        let findings;
+        try {
+          findings = JSON.parse(jsonMatch[0]);
+        } catch (parseError) {
+          console.error('Ollama PII detection JSON parse error:', parseError.message);
+          console.error('Failed JSON:', jsonMatch[0].substring(0, 500));
+          // Simple fix: escape quotes that appear between ": " and ",
+          try {
+            const lines = jsonMatch[0].split('\n');
+            const fixedLines = lines.map(line => {
+              // If line contains "value": "...", fix the value part
+              if (line.includes('"value":')) {
+                return line.replace(/"value":\s*"([^"]*)"/g, (match, val) => {
+                  // This won't match if there are internal quotes, so try manual approach
+                  const valueStart = line.indexOf('"value":');
+                  if (valueStart === -1) return line;
+                  
+                  const firstQuote = line.indexOf('"', valueStart + 8);
+                  if (firstQuote === -1) return line;
+                  
+                  // Find the real closing quote (before , or })
+                  let closingQuote = -1;
+                  for (let i = line.length - 1; i > firstQuote; i--) {
+                    if (line[i] === '"') {
+                      const afterQuote = line.substring(i + 1).trim();
+                      if (afterQuote.startsWith(',') || afterQuote.startsWith('}')) {
+                        closingQuote = i;
+                        break;
+                      }
+                    }
+                  }
+                  
+                  if (closingQuote > firstQuote) {
+                    const value = line.substring(firstQuote + 1, closingQuote);
+                    const escaped = value.replace(/"/g, '\\\\"');
+                    return line.substring(0, firstQuote + 1) + escaped + line.substring(closingQuote);
+                  }
+                  return line;
+                });
+              }
+              return line;
+            });
+            
+            findings = JSON.parse(fixedLines.join('\n'));
+            console.log('Successfully parsed after fixing quotes');
+          } catch (secondError) {
+            console.error('Failed to parse even after quote fixing:', secondError.message);
+            findings = [];
+          }
+        }
         
         findings.forEach(finding => {
           if (finding.type && finding.value) {

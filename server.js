@@ -6,6 +6,7 @@ const mammoth = require('mammoth');
 const pdfParse = require('pdf-parse');
 const pdf2md = require('@opendocsg/pdf2md');
 const TurndownService = require('turndown');
+const crypto = require('crypto');
 const { QdrantClient } = require('@qdrant/js-client-rest');
 const { PIIDetectorFactory } = require('./pii-detector');
 const { VisualizationService } = require('./visualization-service');
@@ -76,6 +77,9 @@ const CATEGORIZATION_MODEL = process.env.CATEGORIZATION_MODEL || '';
 const PII_DETECTION_ENABLED = process.env.PII_DETECTION_ENABLED === 'true';
 const PII_DETECTION_METHOD = process.env.PII_DETECTION_METHOD || 'hybrid'; // ollama, regex, hybrid
 const PII_DETECTION_MODEL = process.env.PII_DETECTION_MODEL || CATEGORIZATION_MODEL || MODEL;
+
+// Model context size (fetched on startup)
+let MODEL_MAX_CONTEXT_TOKENS = 2048; // Default, will be updated from Ollama
 
 // Initialize PII Detector
 let piiDetector = null;
@@ -176,7 +180,7 @@ function createJob(totalFiles) {
 /**
  * Process a single file upload
  */
-async function processSingleFile(file, autoCategorize = false) {
+async function processSingleFile(file, collectionName, autoCategorize = false) {
   // Decode base64-encoded filename (used to preserve UTF-8 for Hebrew/Arabic/etc)
   let filename = file.originalname;
   
@@ -273,7 +277,9 @@ async function processSingleFile(file, autoCategorize = false) {
   // PII Detection - scan for sensitive information
   if (PII_DETECTION_ENABLED) {
     console.log('Scanning for PII...');
+    const piiStartTime = Date.now();
     const piiResult = await detectPII(content);
+    const piiDuration = ((Date.now() - piiStartTime) / 1000).toFixed(2);
     
     if (piiResult.hasPII) {
       metadata.pii_detected = true;
@@ -283,20 +289,22 @@ async function processSingleFile(file, autoCategorize = false) {
       metadata.pii_scan_date = piiResult.scanTimestamp;
       metadata.pii_detection_method = piiResult.detectionMethod;
       
-      console.log(`⚠️  PII detected: ${piiResult.piiTypes.join(', ')} (${piiResult.piiDetails.length} items)`);
+      console.log(`⚠️  PII detected: ${piiResult.piiTypes.join(', ')} (${piiResult.piiDetails.length} items) [${piiDuration}s]`);
     } else {
       metadata.pii_detected = false;
       metadata.pii_scan_date = piiResult.scanTimestamp;
-      console.log('✓ No PII detected');
+      console.log(`✓ No PII detected [${piiDuration}s]`);
     }
   }
 
   // Automatic categorization if enabled and requested
   if (CATEGORIZATION_MODEL && autoCategorize) {
     console.log('Automatic categorization requested...');
+    const catStartTime = Date.now();
     const extracted = await categorizeDocument(content);
+    const catDuration = ((Date.now() - catStartTime) / 1000).toFixed(2);
     metadata = { ...metadata, ...extracted };
-    console.log('Extracted metadata:', extracted);
+    console.log(`Categorization complete [${catDuration}s]:`, extracted);
   }
 
   // Parse metadata from content if it's structured
@@ -304,10 +312,23 @@ async function processSingleFile(file, autoCategorize = false) {
   parsedMetadata.file_type = fileExt;
 
   // Get dense embedding
+  const estimatedTokens = estimateTokenCount(content);
+  console.log(`Generating embedding for ${filename} (${content.length} chars, ~${estimatedTokens} tokens)...`);
+  
+  // Check if content exceeds model's context limit
+  if (estimatedTokens > MODEL_MAX_CONTEXT_TOKENS) {
+    const errorMsg = `Document too large: ${estimatedTokens} tokens exceeds model limit of ${MODEL_MAX_CONTEXT_TOKENS} tokens`;
+    console.error(`❌ ${errorMsg}`);
+    throw new Error(errorMsg);
+  }
+  
+  const embeddingStartTime = Date.now();
   const denseEmbedding = await getDenseEmbedding(content);
+  const embeddingDuration = ((Date.now() - embeddingStartTime) / 1000).toFixed(2);
   if (!denseEmbedding) {
     throw new Error('Failed to generate embedding');
   }
+  console.log(`✓ Embedding generated successfully (${embeddingDuration}s)`);
 
   // Generate sparse vector
   const sparseVector = getSparseVector(content);
@@ -316,7 +337,7 @@ async function processSingleFile(file, autoCategorize = false) {
   const pointId = simpleHash(filename + Date.now());
 
   // Store in Qdrant
-  await qdrantClient.upsert(COLLECTION_NAME, {
+  await qdrantClient.upsert(collectionName, {
     points: [
       {
         id: pointId,
@@ -385,6 +406,350 @@ const upload = multer({
 // Initialize Qdrant client
 const qdrantClient = new QdrantClient({ url: QDRANT_URL });
 
+// Collections Metadata Service
+const COLLECTIONS_METADATA_NAME = '_system_collections';
+
+/**
+ * Generate a UUID v4 using crypto
+ */
+function generateUUID() {
+  return crypto.randomUUID();
+}
+
+/**
+ * Collection Metadata Service
+ * Manages collections metadata using a special Qdrant collection
+ */
+class CollectionMetadataService {
+  constructor(qdrantClient) {
+    this.client = qdrantClient;
+    this.collectionName = COLLECTIONS_METADATA_NAME;
+    this.cache = new Map(); // In-memory cache for faster lookups
+  }
+
+  /**
+   * Initialize the metadata collection if it doesn't exist
+   */
+  async initialize() {
+    try {
+      const collections = await this.client.getCollections();
+      const exists = collections.collections.some(c => c.name === this.collectionName);
+      
+      if (!exists) {
+        console.log('Creating collections metadata collection...');
+        await this.client.createCollection(this.collectionName, {
+          vectors: {
+            size: 1,
+            distance: 'Cosine'
+          }
+        });
+        console.log('Collections metadata collection created');
+      }
+      
+      // Load all collections into cache
+      await this.loadCache();
+      
+      // Ensure default collection exists
+      await this.ensureDefaultCollection();
+    } catch (error) {
+      console.error('Error initializing collections metadata:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Load all collection metadata into cache
+   */
+  async loadCache() {
+    try {
+      const result = await this.client.scroll(this.collectionName, {
+        limit: 1000,
+        with_payload: true,
+        with_vector: false
+      });
+      
+      this.cache.clear();
+      for (const point of result.points) {
+        this.cache.set(point.payload.collectionId, point.payload);
+      }
+      
+      console.log(`Loaded ${this.cache.size} collections into cache`);
+    } catch (error) {
+      console.error('Error loading collections cache:', error);
+    }
+  }
+
+  /**
+   * Ensure default collection exists
+   */
+  async ensureDefaultCollection() {
+    const defaultExists = Array.from(this.cache.values()).some(c => c.isDefault);
+    
+    if (!defaultExists) {
+      console.log('Creating default collection...');
+      // UUID generated using crypto.randomUUID()
+      const defaultId = generateUUID();
+      
+      await this.createCollection({
+        collectionId: defaultId,
+        displayName: 'default',
+        description: 'Default collection',
+        isDefault: true
+      });
+      
+      console.log('Default collection created');
+    }
+  }
+
+  /**
+   * Create a new collection with metadata
+   */
+  async createCollection({ collectionId, displayName, description = '', isDefault = false }) {
+    // UUID generated using crypto.randomUUID()
+    if (!collectionId) {
+      collectionId = generateUUID();
+    }
+    
+    const qdrantName = isDefault ? 'default' : `col_${collectionId.replace(/-/g, '_')}`;
+    const now = new Date().toISOString();
+    
+    const metadata = {
+      collectionId,
+      displayName,
+      description,
+      qdrantName,
+      isDefault,
+      createdAt: now,
+      documentCount: 0
+    };
+    
+    // Create actual Qdrant collection
+    await this.createQdrantCollection(qdrantName);
+    
+    // Store metadata
+    await this.client.upsert(this.collectionName, {
+      points: [{
+        id: collectionId,
+        vector: [0], // Dummy vector (metadata collection doesn't need real vectors)
+        payload: metadata
+      }]
+    });
+    
+    // Update cache
+    this.cache.set(collectionId, metadata);
+    
+    console.log(`Created collection: ${displayName} (${collectionId} -> ${qdrantName})`);
+    return metadata;
+  }
+
+  /**
+   * Create actual Qdrant collection with standard schema
+   */
+  async createQdrantCollection(qdrantName) {
+    try {
+      const collections = await this.client.getCollections();
+      const exists = collections.collections.some(c => c.name === qdrantName);
+      
+      if (!exists) {
+        await this.client.createCollection(qdrantName, {
+          vectors: {
+            dense: {
+              size: 768,
+              distance: 'Cosine'
+            }
+          },
+          sparse_vectors: {
+            sparse: {
+              index: {
+                on_disk: false
+              }
+            }
+          }
+        });
+        
+        // Create payload indexes
+        const indexFields = [
+          'category', 'location', 'tags', 'price', 'rating', 
+          'status', 'coordinates', 'pii_detected', 'pii_risk_level',
+          'has_structured_metadata', 'is_unstructured'
+        ];
+        
+        for (const field of indexFields) {
+          try {
+            await this.client.createPayloadIndex(qdrantName, {
+              field_name: field,
+              field_schema: 'keyword'
+            });
+          } catch (err) {
+            // Geo field needs special handling
+            if (field === 'coordinates') {
+              await this.client.createPayloadIndex(qdrantName, {
+                field_name: field,
+                field_schema: 'geo'
+              });
+            }
+          }
+        }
+        
+        console.log(`Created Qdrant collection: ${qdrantName} with indexes`);
+      }
+    } catch (error) {
+      console.error(`Error creating Qdrant collection ${qdrantName}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get collection metadata by ID
+   */
+  getCollection(collectionId) {
+    return this.cache.get(collectionId);
+  }
+
+  /**
+   * Get all collections
+   */
+  getAllCollections() {
+    return Array.from(this.cache.values()).sort((a, b) => {
+      // Default collection first
+      if (a.isDefault) return -1;
+      if (b.isDefault) return 1;
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    });
+  }
+
+  /**
+   * Get default collection
+   */
+  getDefaultCollection() {
+    return Array.from(this.cache.values()).find(c => c.isDefault);
+  }
+
+  /**
+   * Update collection document count
+   */
+  async updateDocumentCount(collectionId, count) {
+    const metadata = this.cache.get(collectionId);
+    if (!metadata) return;
+    
+    metadata.documentCount = count;
+    
+    await this.client.setPayload(this.collectionName, {
+      points: [collectionId],
+      payload: { documentCount: count }
+    });
+    
+    this.cache.set(collectionId, metadata);
+  }
+
+  /**
+   * Delete collection
+   */
+  async deleteCollection(collectionId) {
+    const metadata = this.cache.get(collectionId);
+    if (!metadata) {
+      throw new Error('Collection not found');
+    }
+    
+    if (metadata.isDefault) {
+      throw new Error('Cannot delete default collection');
+    }
+    
+    // Delete actual Qdrant collection
+    await this.client.deleteCollection(metadata.qdrantName);
+    
+    // Delete metadata
+    await this.client.delete(this.collectionName, {
+      points: [collectionId]
+    });
+    
+    // Remove from cache
+    this.cache.delete(collectionId);
+    
+    console.log(`Deleted collection: ${metadata.displayName} (${collectionId})`);
+  }
+
+  /**
+   * Empty collection (delete all documents)
+   */
+  async emptyCollection(collectionId) {
+    const metadata = this.cache.get(collectionId);
+    if (!metadata) {
+      throw new Error('Collection not found');
+    }
+    
+    // Delete and recreate the collection
+    await this.client.deleteCollection(metadata.qdrantName);
+    await this.createQdrantCollection(metadata.qdrantName);
+    
+    // Update document count
+    await this.updateDocumentCount(collectionId, 0);
+    
+    console.log(`Emptied collection: ${metadata.displayName} (${collectionId})`);
+  }
+
+  /**
+   * Refresh document count for a collection
+   */
+  async refreshDocumentCount(collectionId) {
+    const metadata = this.cache.get(collectionId);
+    if (!metadata) return;
+    
+    try {
+      const info = await this.client.getCollection(metadata.qdrantName);
+      await this.updateDocumentCount(collectionId, info.points_count || 0);
+    } catch (error) {
+      console.error(`Error refreshing document count for ${collectionId}:`, error);
+    }
+  }
+}
+
+// Initialize Collections Metadata Service
+const collectionsService = new CollectionMetadataService(qdrantClient);
+
+/**
+ * Collection Middleware
+ * Validates and resolves collection ID from query params
+ * Attaches collection metadata to req.collection
+ */
+function collectionMiddleware(req, res, next) {
+  try {
+    // Get collection ID from query params or use default
+    let collectionId = req.query.collection;
+    
+    if (!collectionId) {
+      // Use default collection
+      const defaultCollection = collectionsService.getDefaultCollection();
+      if (!defaultCollection) {
+        return res.status(500).json({ 
+          error: 'No default collection found. Please create a collection first.' 
+        });
+      }
+      collectionId = defaultCollection.collectionId;
+    }
+    
+    // Resolve collection metadata
+    const metadata = collectionsService.getCollection(collectionId);
+    if (!metadata) {
+      return res.status(404).json({ 
+        error: 'Collection not found',
+        code: 'COLLECTION_NOT_FOUND',
+        collectionId
+      });
+    }
+    
+    // Attach to request
+    req.collection = metadata;
+    req.collectionId = collectionId;
+    req.qdrantCollection = metadata.qdrantName;
+    
+    next();
+  } catch (error) {
+    console.error('Collection middleware error:', error);
+    res.status(500).json({ error: error.message });
+  }
+}
+
 // Initialize Visualization Service
 const VIZ_CACHE_STRATEGY = process.env.VIZ_CACHE_STRATEGY || 'memory'; // 'memory' or 'redis'
 const visualizationService = new VisualizationService(
@@ -394,6 +759,51 @@ const visualizationService = new VisualizationService(
 );
 
 console.log(`Visualization cache strategy: ${VIZ_CACHE_STRATEGY}`);
+
+/**
+ * Fetch model's max context size from Ollama
+ */
+async function fetchModelContextSize() {
+  try {
+    const headers = {
+      'Content-Type': 'application/json'
+    };
+    if (AUTH_TOKEN) {
+      headers['Authorization'] = `Bearer ${AUTH_TOKEN}`;
+    }
+    
+    // Replace /api/embed with /api/show to get model info
+    const showUrl = OLLAMA_URL.replace('/api/embed', '/api/show');
+    
+    const response = await axios.post(showUrl, {
+      name: MODEL
+    }, {
+      headers,
+      timeout: 10000 // 10 second timeout
+    });
+    
+    // Parse parameters string to extract num_ctx
+    const params = response.data.parameters || '';
+    const numCtxMatch = params.match(/num_ctx\s+(\d+)/);
+    
+    if (numCtxMatch) {
+      MODEL_MAX_CONTEXT_TOKENS = parseInt(numCtxMatch[1], 10);
+      console.log(`✓ Model ${MODEL} context size: ${MODEL_MAX_CONTEXT_TOKENS} tokens`);
+    } else {
+      console.warn(`⚠️  Could not parse context size from model, using default: ${MODEL_MAX_CONTEXT_TOKENS}`);
+    }
+  } catch (error) {
+    console.error(`⚠️  Failed to fetch model context size: ${error.message}`);
+    console.log(`   Using default context size: ${MODEL_MAX_CONTEXT_TOKENS} tokens`);
+  }
+}
+
+/**
+ * Estimate token count from text (rough approximation: 4 chars = 1 token)
+ */
+function estimateTokenCount(text) {
+  return Math.ceil(text.length / 4);
+}
 
 /**
  * Get dense embedding from Ollama
@@ -410,10 +820,22 @@ async function getDenseEmbedding(text) {
       model: MODEL,
       input: text
     }, {
-      headers
+      headers,
+      timeout: 300000 // 5 minute timeout for large documents
     });
     return response.data.embeddings[0];
   } catch (error) {
+    if (error.code === 'ECONNREFUSED') {
+      console.error('❌ Ollama service is not running or not accessible at', OLLAMA_URL);
+      throw new Error('Ollama service unavailable. Please start Ollama.');
+    } else if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
+      console.error('❌ Ollama request timed out after 5 minutes');
+      console.error('   Document may be too large for embedding model');
+      throw new Error('Embedding generation timed out. Document may be too large.');
+    } else if (error.response?.status === 400) {
+      console.error('❌ Ollama rejected the request:', error.response.data);
+      throw new Error('Invalid embedding request. Document may exceed model context limit.');
+    }
     console.error('Error getting dense embedding:', error.message);
     throw error;
   }
@@ -463,19 +885,26 @@ function simpleHash(str) {
 /**
  * Count total documents matching a filter
  */
-async function countFilteredDocuments(filters) {
-  if (!filters) {
-    const collectionInfo = await qdrantClient.getCollection(COLLECTION_NAME);
-    return collectionInfo.points_count;
+async function countFilteredDocuments(collectionName, filters) {
+  try {
+    if (!filters) {
+      const collectionInfo = await qdrantClient.getCollection(collectionName);
+      return collectionInfo.points_count;
+    }
+    
+    // Use count API with filter
+    // Note: Qdrant count can be slow with complex filters
+    const countResult = await qdrantClient.count(collectionName, {
+      filter: filters,
+      exact: false // Use approximate count for speed
+    });
+    
+    return countResult.count;
+  } catch (error) {
+    console.error('Error counting documents:', error.message);
+    // Return null to indicate count failed - frontend can handle this
+    return null;
   }
-  
-  // Use count API with filter
-  const countResult = await qdrantClient.count(COLLECTION_NAME, {
-    filter: filters,
-    exact: true
-  });
-  
-  return countResult.count;
 }
 
 /**
@@ -837,26 +1266,164 @@ app.get('/api/health', async (req, res) => {
 
 /**
  * GET /api/collections
- * Get available collections
+ * Get all collections with metadata
  */
 app.get('/api/collections', async (req, res) => {
   try {
-    const collections = await qdrantClient.getCollections();
-    res.json(collections.collections);
+    const collections = collectionsService.getAllCollections();
+    
+    // Refresh document counts in background
+    for (const collection of collections) {
+      collectionsService.refreshDocumentCount(collection.collectionId).catch(err => {
+        console.error(`Failed to refresh count for ${collection.collectionId}:`, err);
+      });
+    }
+    
+    res.json(collections);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
 /**
- * GET /api/collection/:name/info
- * Get collection information
+ * POST /api/collections
+ * Create a new collection
  */
-app.get('/api/collection/:name/info', async (req, res) => {
+app.post('/api/collections', async (req, res) => {
   try {
-    const info = await qdrantClient.getCollection(req.params.name);
-    res.json(info);
+    const { displayName, description } = req.body;
+    
+    if (!displayName || displayName.trim().length === 0) {
+      return res.status(400).json({ error: 'Display name is required' });
+    }
+    
+    // Validate display name (alphanumeric, spaces, underscores, hyphens)
+    if (!/^[a-zA-Z0-9 _-]+$/.test(displayName)) {
+      return res.status(400).json({ 
+        error: 'Display name can only contain letters, numbers, spaces, underscores, and hyphens' 
+      });
+    }
+    
+    if (displayName.length > 50) {
+      return res.status(400).json({ error: 'Display name must be 50 characters or less' });
+    }
+    
+    // Check for duplicate display name
+    const existing = collectionsService.getAllCollections();
+    if (existing.some(c => c.displayName.toLowerCase() === displayName.toLowerCase())) {
+      return res.status(400).json({ error: 'A collection with this name already exists' });
+    }
+    
+    const collection = await collectionsService.createCollection({
+      displayName,
+      description: description || ''
+    });
+    
+    res.status(201).json(collection);
   } catch (error) {
+    console.error('Error creating collection:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * DELETE /api/collections/:collectionId
+ * Delete a collection
+ */
+app.delete('/api/collections/:collectionId', async (req, res) => {
+  try {
+    const { collectionId } = req.params;
+    
+    const metadata = collectionsService.getCollection(collectionId);
+    if (!metadata) {
+      return res.status(404).json({ error: 'Collection not found' });
+    }
+    
+    if (metadata.isDefault) {
+      return res.status(403).json({ error: 'Cannot delete default collection' });
+    }
+    
+    await collectionsService.deleteCollection(collectionId);
+    res.json({ message: 'Collection deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting collection:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * POST /api/collections/:collectionId/empty
+ * Empty a collection (delete all documents)
+ */
+app.post('/api/collections/:collectionId/empty', async (req, res) => {
+  try {
+    const { collectionId } = req.params;
+    
+    const metadata = collectionsService.getCollection(collectionId);
+    if (!metadata) {
+      return res.status(404).json({ error: 'Collection not found' });
+    }
+    
+    await collectionsService.emptyCollection(collectionId);
+    res.json({ message: 'Collection emptied successfully' });
+  } catch (error) {
+    console.error('Error emptying collection:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+/**
+ * GET /api/collections/:collectionId/stats
+ * Get collection stats
+ */
+app.get('/api/collections/:collectionId/stats', async (req, res) => {
+  try {
+    const { collectionId } = req.params;
+    
+    const metadata = collectionsService.getCollection(collectionId);
+    if (!metadata) {
+      return res.status(404).json({ error: 'Collection not found' });
+    }
+    
+    // Get detailed stats from actual Qdrant collection
+    const info = await qdrantClient.getCollection(metadata.qdrantName);
+    
+    // Get categories, locations, tags from payload
+    const result = await qdrantClient.scroll(metadata.qdrantName, {
+      limit: 1000,
+      with_payload: ['category', 'location', 'tags', 'has_structured_metadata', 'is_unstructured'],
+      with_vector: false
+    });
+    
+    const categories = new Set();
+    const locations = new Set();
+    const tags = new Set();
+    let structuredCount = 0;
+    let unstructuredCount = 0;
+    
+    for (const point of result.points) {
+      if (point.payload.category) categories.add(point.payload.category);
+      if (point.payload.location) locations.add(point.payload.location);
+      if (point.payload.tags) {
+        for (const tag of point.payload.tags) {
+          tags.add(tag);
+        }
+      }
+      if (point.payload.has_structured_metadata) structuredCount++;
+      if (point.payload.is_unstructured) unstructuredCount++;
+    }
+    
+    res.json({
+      ...metadata,
+      documentCount: info.points_count || 0,
+      categories: Array.from(categories),
+      locations: Array.from(locations),
+      tags: Array.from(tags),
+      structuredCount,
+      unstructuredCount
+    });
+  } catch (error) {
+    console.error('Error getting collection stats:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -865,7 +1432,7 @@ app.get('/api/collection/:name/info', async (req, res) => {
  * POST /api/search/semantic
  * Semantic search (dense vectors only)
  */
-app.post('/api/search/semantic', async (req, res) => {
+app.post('/api/search/semantic', collectionMiddleware, async (req, res) => {
   try {
     const { query, limit = 10, offset = 0, filters, documentIds } = req.body;
     
@@ -913,7 +1480,7 @@ app.post('/api/search/semantic', async (req, res) => {
           let hasMore = true;
           
           while (hasMore) {
-            const scrollResult = await qdrantClient.scroll(COLLECTION_NAME, {
+            const scrollResult = await qdrantClient.scroll(req.qdrantCollection, {
               limit: 100,
               offset: scrollOffset,
               with_payload: true,
@@ -943,22 +1510,22 @@ app.post('/api/search/semantic', async (req, res) => {
           totalEstimate = allResults.length;
         } else {
           scrollParams.filter = effectiveFilters;
-          const scrollResults = await qdrantClient.scroll(COLLECTION_NAME, scrollParams);
+          const scrollResults = await qdrantClient.scroll(req.qdrantCollection, scrollParams);
           results = scrollResults.points.map(p => ({
             id: p.id,
             score: 1.0,
             payload: p.payload
           }));
-          totalEstimate = await countFilteredDocuments(effectiveFilters);
+          totalEstimate = await countFilteredDocuments(req.qdrantCollection, effectiveFilters);
         }
       } else {
-        const scrollResults = await qdrantClient.scroll(COLLECTION_NAME, scrollParams);
+        const scrollResults = await qdrantClient.scroll(req.qdrantCollection, scrollParams);
         results = scrollResults.points.map(p => ({
           id: p.id,
           score: 1.0,
           payload: p.payload
         }));
-        totalEstimate = await countFilteredDocuments(filters);
+        totalEstimate = await countFilteredDocuments(req.qdrantCollection, filters);
       }
     } else {
       // Normal vector search
@@ -999,7 +1566,7 @@ app.post('/api/search/semantic', async (req, res) => {
             filter: effectiveFilters.must ? { must: effectiveFilters.must } : undefined
           };
           
-          const allResults = await qdrantClient.search(COLLECTION_NAME, largeSearchParams);
+          const allResults = await qdrantClient.search(req.qdrantCollection, largeSearchParams);
           const filteredResults = allResults.filter(r => r.payload.pii_detected === undefined);
           
           const startIdx = parseInt(offset);
@@ -1013,20 +1580,20 @@ app.post('/api/search/semantic', async (req, res) => {
           totalEstimate = filteredResults.length;
         } else {
           searchParams.filter = effectiveFilters;
-          const searchResults = await qdrantClient.search(COLLECTION_NAME, searchParams);
+          const searchResults = await qdrantClient.search(req.qdrantCollection, searchParams);
           results = searchResults.map(r => ({
             id: r.id,
             score: r.score,
             payload: r.payload
           }));
-          totalEstimate = await countFilteredDocuments(effectiveFilters);
+          totalEstimate = await countFilteredDocuments(req.qdrantCollection, effectiveFilters);
         }
       } else if (documentIds && Array.isArray(documentIds) && documentIds.length > 0) {
         // No filters but documentIds provided
         searchParams.filter = {
           must: [{ has_id: documentIds }]
         };
-        const searchResults = await qdrantClient.search(COLLECTION_NAME, searchParams);
+        const searchResults = await qdrantClient.search(req.qdrantCollection, searchParams);
         results = searchResults.map(r => ({
           id: r.id,
           score: r.score,
@@ -1034,13 +1601,13 @@ app.post('/api/search/semantic', async (req, res) => {
         }));
         totalEstimate = documentIds.length; // Rough estimate
       } else {
-        const searchResults = await qdrantClient.search(COLLECTION_NAME, searchParams);
+        const searchResults = await qdrantClient.search(req.qdrantCollection, searchParams);
         results = searchResults.map(r => ({
           id: r.id,
           score: r.score,
           payload: r.payload
         }));
-        totalEstimate = await countFilteredDocuments(null);
+        totalEstimate = await countFilteredDocuments(req.qdrantCollection, null);
       }
     }
     
@@ -1060,7 +1627,7 @@ app.post('/api/search/semantic', async (req, res) => {
  * POST /api/search/hybrid
  * Hybrid search (dense + sparse vectors)
  */
-app.post('/api/search/hybrid', async (req, res) => {
+app.post('/api/search/hybrid', collectionMiddleware, async (req, res) => {
   try {
     const { query, limit = 10, offset = 0, denseWeight = 0.7, filters, documentIds } = req.body;
     
@@ -1186,7 +1753,7 @@ app.post('/api/search/hybrid', async (req, res) => {
         filter: filters.must ? { must: filters.must } : undefined
       };
       
-      const allResults = await qdrantClient.search(COLLECTION_NAME, largeSearchParams);
+      const allResults = await qdrantClient.search(req.qdrantCollection, largeSearchParams);
       
       // Filter out documents that have pii_detected field
       const filteredResults = allResults.filter(r => r.payload.pii_detected === undefined);
@@ -1210,16 +1777,16 @@ app.post('/api/search/hybrid', async (req, res) => {
         }))
       });
     } else {
-      const results = await qdrantClient.search(COLLECTION_NAME, searchParams);
+      const results = await qdrantClient.search(req.qdrantCollection, searchParams);
       
-      // Get total count with filter
-      const totalEstimate = await countFilteredDocuments(searchParams.filter);
+      // Get total count with filter (may be null if count fails/times out)
+      const totalEstimate = await countFilteredDocuments(req.qdrantCollection, searchParams.filter);
       
       res.json({
         query,
         searchType: 'hybrid',
         denseWeight,
-        total: totalEstimate,
+        total: totalEstimate !== null ? totalEstimate : results.length, // Fallback to results length
         results: results.map(r => ({
           id: r.id,
           score: r.score,
@@ -1237,7 +1804,7 @@ app.post('/api/search/hybrid', async (req, res) => {
  * POST /api/search/location
  * Location-based search
  */
-app.post('/api/search/location', async (req, res) => {
+app.post('/api/search/location', collectionMiddleware, async (req, res) => {
   try {
     const { query, location, limit = 10, offset = 0 } = req.body;
     
@@ -1247,7 +1814,7 @@ app.post('/api/search/location', async (req, res) => {
     
     const queryEmbedding = await getDenseEmbedding(query);
     
-    const results = await qdrantClient.search(COLLECTION_NAME, {
+    const results = await qdrantClient.search(req.qdrantCollection, {
       vector: {
         name: 'dense',
         vector: queryEmbedding
@@ -1283,7 +1850,7 @@ app.post('/api/search/location', async (req, res) => {
  * POST /api/search/geo
  * Geo-radius search
  */
-app.post('/api/search/geo', async (req, res) => {
+app.post('/api/search/geo', collectionMiddleware, async (req, res) => {
   try {
     const { query, latitude, longitude, radius, limit = 10, offset = 0 } = req.body;
     
@@ -1295,7 +1862,7 @@ app.post('/api/search/geo', async (req, res) => {
     
     const queryEmbedding = await getDenseEmbedding(query);
     
-    const results = await qdrantClient.search(COLLECTION_NAME, {
+    const results = await qdrantClient.search(req.qdrantCollection, {
       vector: {
         name: 'dense',
         vector: queryEmbedding
@@ -1342,7 +1909,7 @@ app.post('/api/search/geo', async (req, res) => {
  * Browse all documents with server-side session cache pagination
  * Uses session cache to store sorted document IDs, fetches only requested page
  */
-app.get('/api/browse', async (req, res) => {
+app.get('/api/browse', collectionMiddleware, async (req, res) => {
   try {
     const limit = parseInt(req.query.limit || '20');
     const page = parseInt(req.query.page || '1');
@@ -1360,12 +1927,14 @@ app.get('/api/browse', async (req, res) => {
     // Check if we have a valid cached session
     if (sessionId && browseCache.has(sessionId)) {
       const cached = browseCache.get(sessionId);
-      // Verify cache matches current sort settings
-      if (cached.cacheKey === cacheKey && Date.now() - cached.timestamp < CACHE_TTL) {
+      // Verify cache matches current sort settings AND collection
+      if (cached.cacheKey === cacheKey && 
+          cached.collectionId === req.collectionId &&
+          Date.now() - cached.timestamp < CACHE_TTL) {
         sortedIds = cached.ids;
         console.log(`Using cached browse session: ${sessionId} (${sortedIds.length} documents)`);
       } else {
-        console.log(`Cache invalid or expired for session: ${sessionId}`);
+        console.log(`Cache invalid, expired, or collection mismatch for session: ${sessionId}`);
       }
     }
 
@@ -1378,7 +1947,7 @@ app.get('/api/browse', async (req, res) => {
       let nextOffset = null;
       
       do {
-        const scrollResult = await qdrantClient.scroll(COLLECTION_NAME, {
+        const scrollResult = await qdrantClient.scroll(req.qdrantCollection, {
           limit: 100,
           offset: nextOffset,
           with_payload: true,
@@ -1425,11 +1994,12 @@ app.get('/api/browse', async (req, res) => {
       // Extract just the IDs for caching
       sortedIds = allPoints.map(p => p.id);
       
-      // Generate new session ID and cache the sorted IDs
-      newSessionId = `browse-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      // Generate new session ID and cache the sorted IDs (include collection in session ID)
+      newSessionId = `browse-${req.collectionId}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       browseCache.set(newSessionId, {
         ids: sortedIds,
         cacheKey: cacheKey,
+        collectionId: req.collectionId,
         timestamp: Date.now()
       });
       
@@ -1445,7 +2015,7 @@ app.get('/api/browse', async (req, res) => {
     console.log(`Retrieving page ${page} (${pageIds.length} documents)`);
 
     // Retrieve only the documents for this page
-    const retrievedPoints = await qdrantClient.retrieve(COLLECTION_NAME, {
+    const retrievedPoints = await qdrantClient.retrieve(req.qdrantCollection, {
       ids: pageIds,
       with_payload: true,
       with_vector: false
@@ -1484,7 +2054,7 @@ app.get('/api/browse', async (req, res) => {
  * Fetch documents by IDs (for bookmarks)
  * Query params: ids (comma-separated list of document IDs)
  */
-app.get('/api/bookmarks', async (req, res) => {
+app.get('/api/bookmarks', collectionMiddleware, async (req, res) => {
   try {
     const idsParam = req.query.ids || '';
     const ids = idsParam.split(',')
@@ -1501,7 +2071,7 @@ app.get('/api/bookmarks', async (req, res) => {
     }
     
     // Use retrieve API to fetch specific points by IDs
-    const points = await qdrantClient.retrieve(COLLECTION_NAME, {
+    const points = await qdrantClient.retrieve(req.qdrantCollection, {
       ids: ids,
       with_payload: true,
       with_vector: false
@@ -1523,12 +2093,12 @@ app.get('/api/bookmarks', async (req, res) => {
  * GET /api/stats
  * Get collection statistics
  */
-app.get('/api/stats', async (req, res) => {
+app.get('/api/stats', collectionMiddleware, async (req, res) => {
   try {
-    const info = await qdrantClient.getCollection(COLLECTION_NAME);
+    const info = await qdrantClient.getCollection(req.qdrantCollection);
     
     // Get sample documents to extract unique values
-    const samples = await qdrantClient.scroll(COLLECTION_NAME, {
+    const samples = await qdrantClient.scroll(req.qdrantCollection, {
       limit: 100,
       with_payload: true
     });
@@ -1619,7 +2189,7 @@ app.get('/api/temp-files/:id', (req, res) => {
  * POST /api/recommend
  * Find similar documents using Qdrant's recommendation API
  */
-app.post('/api/recommend', async (req, res) => {
+app.post('/api/recommend', collectionMiddleware, async (req, res) => {
   try {
     const { documentId, limit = 10, offset = 0 } = req.body;
     
@@ -1631,7 +2201,7 @@ app.post('/api/recommend', async (req, res) => {
     const pointId = isNaN(documentId) ? documentId : parseInt(documentId, 10);
     
     // First, get total count of similar documents (fetch with high limit to count)
-    const allSimilar = await qdrantClient.recommend(COLLECTION_NAME, {
+    const allSimilar = await qdrantClient.recommend(req.qdrantCollection, {
       positive: [pointId],
       limit: 100, // Fetch up to 100 similar documents to get accurate count
       with_payload: false, // Don't need payload for counting
@@ -1643,7 +2213,7 @@ app.post('/api/recommend', async (req, res) => {
     
     // Now fetch the paginated results with payload
     const totalToFetch = parseInt(limit) + parseInt(offset);
-    const results = await qdrantClient.recommend(COLLECTION_NAME, {
+    const results = await qdrantClient.recommend(req.qdrantCollection, {
       positive: [pointId],
       limit: totalToFetch,
       with_payload: true,
@@ -1676,7 +2246,7 @@ app.post('/api/recommend', async (req, res) => {
  * Search for similar documents by uploading a file or using a temp file ID
  * This is like "find similar" but without saving the document
  */
-app.post('/api/search/by-document', upload.single('file'), async (req, res) => {
+app.post('/api/search/by-document', collectionMiddleware, upload.single('file'), async (req, res) => {
   try {
     const limit = parseInt(req.body.limit) || 10;
     const offset = parseInt(req.body.offset) || 0;
@@ -1771,7 +2341,7 @@ app.post('/api/search/by-document', upload.single('file'), async (req, res) => {
 
     // Search for similar documents using the embedding
     const totalToFetch = limit + offset;
-    const searchResults = await qdrantClient.search(COLLECTION_NAME, {
+    const searchResults = await qdrantClient.search(req.qdrantCollection, {
       vector: {
         name: 'dense',
         vector: embedding
@@ -1810,12 +2380,12 @@ app.post('/api/search/by-document', upload.single('file'), async (req, res) => {
  * GET /api/random
  * Get random documents from the collection
  */
-app.get('/api/random', async (req, res) => {
+app.get('/api/random', collectionMiddleware, async (req, res) => {
   try {
     const { limit = 10, seed, offset = 0 } = req.query;
     
     // Get collection info to know total count
-    const info = await qdrantClient.getCollection(COLLECTION_NAME);
+    const info = await qdrantClient.getCollection(req.qdrantCollection);
     const totalPoints = info.points_count;
     
     if (totalPoints === 0) {
@@ -1842,7 +2412,7 @@ app.get('/api/random', async (req, res) => {
     console.log(`Random request: seed=${usedSeed}, totalPoints=${totalPoints}, requestedLimit=${requestedLimit}, offset=${offsetNum}, fetchLimit=${fetchLimit}, randomOffset=${randomOffset}`);
     
     // Use scroll API with random offset
-    const results = await qdrantClient.scroll(COLLECTION_NAME, {
+    const results = await qdrantClient.scroll(req.qdrantCollection, {
       limit: fetchLimit,
       offset: randomOffset,
       with_payload: true
@@ -1875,7 +2445,7 @@ app.get('/api/random', async (req, res) => {
  * GET /api/document/:id
  * Get a specific document by ID
  */
-app.get('/api/document/:id', async (req, res) => {
+app.get('/api/document/:id', collectionMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
     
@@ -1883,7 +2453,7 @@ app.get('/api/document/:id', async (req, res) => {
     const pointId = isNaN(id) ? id : parseInt(id, 10);
     
     // Retrieve the document from Qdrant
-    const points = await qdrantClient.retrieve(COLLECTION_NAME, {
+    const points = await qdrantClient.retrieve(req.qdrantCollection, {
       ids: [pointId],
       with_payload: true
     });
@@ -1907,7 +2477,7 @@ app.get('/api/document/:id', async (req, res) => {
  * GET /api/facets
  * Get faceted counts for categories, locations, and tags
  */
-app.get('/api/facets', async (req, res) => {
+app.get('/api/facets', collectionMiddleware, async (req, res) => {
   try {
     // Scroll through all documents to count facets
     // For large collections, you might want to limit this or use sampling
@@ -1923,7 +2493,7 @@ app.get('/api/facets', async (req, res) => {
     let hasMore = true;
     
     while (hasMore) {
-      const scrollResult = await qdrantClient.scroll(COLLECTION_NAME, {
+      const scrollResult = await qdrantClient.scroll(req.qdrantCollection, {
         limit: 100,
         offset: offset,
         with_payload: true
@@ -2023,7 +2593,7 @@ app.get('/api/facets', async (req, res) => {
  * POST /api/documents/upload
  * Upload a document file (supports txt, json, pdf, doc, docx)
  */
-app.post('/api/documents/upload', upload.array('files', 100), async (req, res) => {
+app.post('/api/documents/upload', collectionMiddleware, upload.array('files', 100), async (req, res) => {
   try {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'No files uploaded' });
@@ -2066,7 +2636,7 @@ app.post('/api/documents/upload', upload.array('files', 100), async (req, res) =
         job.currentFile = fileInfo.name;
 
         try {
-          const result = await processSingleFile(file, autoCategorize);
+          const result = await processSingleFile(file, req.qdrantCollection, autoCategorize);
           
           fileInfo.status = 'success';
           fileInfo.id = result.id;
@@ -2092,6 +2662,11 @@ app.post('/api/documents/upload', upload.array('files', 100), async (req, res) =
         job.status = 'completed';
       }
       job.endTime = Date.now();
+      
+      // Update collection document count
+      if (job.successfulFiles > 0) {
+        await collectionsService.refreshDocumentCount(req.collectionId);
+      }
       
       console.log(`Job ${job.id} finished: ${job.successfulFiles} successful, ${job.failedFiles} failed`);
     })();
@@ -2162,7 +2737,7 @@ app.post('/api/upload-jobs/:jobId/stop', (req, res) => {
  * POST /api/documents/add
  * Add a new document to the collection (legacy text-based endpoint)
  */
-app.post('/api/documents/add', async (req, res) => {
+app.post('/api/documents/add', collectionMiddleware, async (req, res) => {
   try {
     const { filename, content, metadata = {} } = req.body;
     
@@ -2209,7 +2784,7 @@ app.post('/api/documents/add', async (req, res) => {
     const pointId = simpleHash(filename + Date.now());
     
     // Store in Qdrant
-    await qdrantClient.upsert(COLLECTION_NAME, {
+    await qdrantClient.upsert(req.qdrantCollection, {
       points: [
         {
           id: pointId,
@@ -2227,6 +2802,9 @@ app.post('/api/documents/add', async (req, res) => {
     });
     
     console.log(`✅ Successfully added: ${filename}`);
+    
+    // Update collection document count
+    await collectionsService.refreshDocumentCount(req.collectionId);
     
     res.json({
       success: true,
@@ -2247,7 +2825,7 @@ app.post('/api/documents/add', async (req, res) => {
  * POST /api/documents/:id/scan-pii
  * Scan existing document for PII (retroactive scanning)
  */
-app.post('/api/documents/:id/scan-pii', async (req, res) => {
+app.post('/api/documents/:id/scan-pii', collectionMiddleware, async (req, res) => {
   try {
     if (!PII_DETECTION_ENABLED) {
       return res.status(400).json({ 
@@ -2259,7 +2837,7 @@ app.post('/api/documents/:id/scan-pii', async (req, res) => {
     const docId = parseInt(req.params.id);
     
     // Retrieve document from Qdrant
-    const docs = await qdrantClient.retrieve(COLLECTION_NAME, { 
+    const docs = await qdrantClient.retrieve(req.qdrantCollection, { 
       ids: [docId],
       with_payload: true,
       with_vector: false
@@ -2281,7 +2859,7 @@ app.post('/api/documents/:id/scan-pii', async (req, res) => {
     const piiResult = await detectPII(doc.payload.content);
     
     // Update document in Qdrant (only PII fields)
-    await qdrantClient.setPayload(COLLECTION_NAME, {
+    await qdrantClient.setPayload(req.qdrantCollection, {
       points: [docId],
       payload: {
         pii_detected: piiResult.hasPII,
@@ -2321,7 +2899,7 @@ app.post('/api/documents/:id/scan-pii', async (req, res) => {
  * POST /api/documents/scan-all-pii
  * Scan all documents for PII (bulk retroactive scanning)
  */
-app.post('/api/documents/scan-all-pii', async (req, res) => {
+app.post('/api/documents/scan-all-pii', collectionMiddleware, async (req, res) => {
   try {
     if (!PII_DETECTION_ENABLED) {
       return res.status(400).json({ 
@@ -2343,7 +2921,7 @@ app.post('/api/documents/scan-all-pii', async (req, res) => {
     let hasMore = true;
     
     while (hasMore) {
-      const scrollResult = await qdrantClient.scroll(COLLECTION_NAME, {
+      const scrollResult = await qdrantClient.scroll(req.qdrantCollection, {
         limit: 50,
         with_payload: true,
         with_vector: false,
@@ -2371,7 +2949,7 @@ app.post('/api/documents/scan-all-pii', async (req, res) => {
           console.log(`Scanning: ${point.payload.filename}`);
           const piiResult = await detectPII(point.payload.content);
           
-          await qdrantClient.setPayload(COLLECTION_NAME, {
+          await qdrantClient.setPayload(req.qdrantCollection, {
             points: [point.id],
             payload: {
               pii_detected: piiResult.hasPII,
@@ -2493,12 +3071,13 @@ function parseMetadataFromContent(filename, content, providedMetadata) {
  * GET /api/visualize/scatter
  * Get 2D scatter plot data for document visualization
  */
-app.get('/api/visualize/scatter', async (req, res) => {
+app.get('/api/visualize/scatter', collectionMiddleware, async (req, res) => {
   try {
     const forceRefresh = req.query.refresh === 'true';
     const limit = parseInt(req.query.limit) || 1000;
 
     const data = await visualizationService.getScatterData({
+      collectionName: req.qdrantCollection,
       forceRefresh,
       limit
     });
@@ -2520,7 +3099,7 @@ app.get('/api/visualize/scatter', async (req, res) => {
  * POST /api/visualize/search-results
  * Get visualization for specific search results
  */
-app.post('/api/visualize/search-results', async (req, res) => {
+app.post('/api/visualize/search-results', collectionMiddleware, async (req, res) => {
   try {
     const { query, searchType, denseWeight, filters, limit, forceRefresh, bookmarkIds } = req.body;
 
@@ -2531,6 +3110,7 @@ app.post('/api/visualize/search-results', async (req, res) => {
     }
 
     const data = await visualizationService.getSearchResultsVisualization({
+      collectionName: req.qdrantCollection,
       query,
       searchType,
       denseWeight,
@@ -2558,11 +3138,12 @@ app.post('/api/visualize/search-results', async (req, res) => {
  * POST /api/visualize/refresh
  * Force refresh visualization cache
  */
-app.post('/api/visualize/refresh', async (req, res) => {
+app.post('/api/visualize/refresh', collectionMiddleware, async (req, res) => {
   try {
     await visualizationService.clearCache();
     
     const data = await visualizationService.getScatterData({
+      collectionName: req.qdrantCollection,
       forceRefresh: true,
       limit: req.body.limit || 1000
     });
@@ -2585,7 +3166,7 @@ app.post('/api/visualize/refresh', async (req, res) => {
  * GET /api/visualize/stats
  * Get cache statistics
  */
-app.get('/api/visualize/stats', async (req, res) => {
+app.get('/api/visualize/stats', collectionMiddleware, async (req, res) => {
   try {
     const stats = await visualizationService.getCacheStats();
     
@@ -2603,8 +3184,24 @@ app.get('/api/visualize/stats', async (req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
-  console.log(`🚀 API Server running on http://localhost:${PORT}`);
-  console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
-  console.log(`🔍 Ready to search in collection: ${COLLECTION_NAME}`);
-});
+async function startServer() {
+  try {
+    // Initialize collections metadata service
+    await collectionsService.initialize();
+    console.log('✅ Collections metadata service initialized');
+    
+    // Fetch model context size from Ollama
+    await fetchModelContextSize();
+    
+    app.listen(PORT, () => {
+      console.log(`🚀 API Server running on http://localhost:${PORT}`);
+      console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
+      console.log(`🗂️  Collections support enabled`);
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+startServer();

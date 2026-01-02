@@ -86,10 +86,10 @@ The hybrid method uses a **two-stage validation** process:
 ## 🛡️ Advanced Features
 
 ### 1. Duplicate Detection
-Prevents infinite loops with non-English content:
+Prevents infinite loops with repeated findings:
 - Tracks occurrence count per finding
 - Stops stream if same finding appears >3 times
-- Critical for Hebrew, Arabic, Chinese documents
+- Critical for handling LLM response anomalies
 
 ### 2. Phone Number Validation
 International phone validation with graceful handling:

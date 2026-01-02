@@ -7,6 +7,16 @@
             <span class="icon">🔍</span>
             Ollama Qdrant Search
           </h1>
+          <div class="header-center">
+            <CollectionSelector 
+              ref="collectionSelectorRef"
+              v-if="currentCollectionId"
+              :currentCollectionId="currentCollectionId"
+              @collection-changed="handleCollectionChanged"
+              @create-collection="handleCreateCollection"
+              @manage-collections="handleManageCollections"
+            />
+          </div>
           <div class="header-right">
             <div class="nav-buttons">
               <button @click="switchView('search')" class="btn btn-secondary btn-compact" :class="{ 'active': currentView === 'search' }">
@@ -64,6 +74,7 @@
             :denseWeight="0"
             :browseSortBy="browseSortBy"
             :browseSortOrder="browseSortOrder"
+            :currentCollectionId="currentCollectionId"
             @page-change="handleBrowsePageChange"
             @sort-change="handleBrowseSortChange"
             @limit-change="handleBrowseLimitChange"
@@ -87,6 +98,7 @@
             :limit="bookmarksLimit"
             :filters="{}"
             :denseWeight="0"
+            :currentCollectionId="currentCollectionId"
             @find-similar="handleFindSimilar"
             @show-pii-modal="handleShowPIIModal"
             @refresh-results="loadBookmarkedDocuments"
@@ -103,6 +115,7 @@
           <FacetBar
             :results="results"
             :activeFilters="activeFilters"
+            :currentCollectionId="currentCollectionId"
             @filter-category="handleFilterCategory"
             @filter-location="handleFilterLocation"
             @filter-tag="handleFilterTag"
@@ -138,6 +151,7 @@
                 :limit="searchFormRef?.limit || 10"
                 :filters="lastSearchParams?.filters || {}"
                 :denseWeight="lastSearchParams?.denseWeight || 0.7"
+                :currentCollectionId="currentCollectionId"
                 @page-change="handlePageChange"
                 @find-similar="handleFindSimilar"
                 @clear-similar="handleClearSimilar"
@@ -187,6 +201,17 @@
       @close="closePIIModal"
     />
 
+    <!-- Collection Management Modal -->
+    <CollectionManagementModal
+      :is-open="showCollectionModal"
+      :current-collection-id="currentCollectionId"
+      @close="showCollectionModal = false"
+      @collection-created="handleCollectionCreated"
+      @collection-switched="handleCollectionChanged"
+      @collection-deleted="handleCollectionDeleted"
+      @collection-emptied="handleCollectionEmptied"
+    />
+
     <!-- Scan Notification -->
     <ScanNotification
       :visible="showScanNotification"
@@ -202,8 +227,10 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, ref } from 'vue'
-import api, { getActiveUploadJob, stopUploadJob } from './api'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import api, { fetchCollections, getActiveUploadJob, setCurrentCollection, stopUploadJob } from './api'
+import CollectionManagementModal from './components/CollectionManagementModal.vue'
+import CollectionSelector from './components/CollectionSelector.vue'
 import FacetBar from './components/FacetBar.vue'
 import PIIDetailsModal from './components/PIIDetailsModal.vue'
 import ResultsList from './components/ResultsList.vue'
@@ -211,6 +238,137 @@ import ScanNotification from './components/ScanNotification.vue'
 import SearchForm from './components/SearchForm.vue'
 import UploadModal from './components/UploadModal.vue'
 import UploadProgressModal from './components/UploadProgressModal.vue'
+
+// Collection state
+const currentCollectionId = ref(null)
+const showCollectionModal = ref(false)
+const isInitializing = ref(true) // Track if we're in initial page load
+
+// Initialize collection from localStorage or URL
+const initializeCollection = async () => {
+  const urlParams = new URLSearchParams(window.location.search)
+  const urlCollection = urlParams.get('collection')
+  const storedCollection = localStorage.getItem('activeCollection')
+  
+  try {
+    const collections = await fetchCollections()
+    
+    if (urlCollection) {
+      // URL takes precedence
+      const collection = collections.find(c => c.collectionId === urlCollection)
+      if (collection) {
+        currentCollectionId.value = urlCollection
+      } else {
+        // Invalid collection in URL, use default
+        const defaultCollection = collections.find(c => c.isDefault)
+        currentCollectionId.value = defaultCollection?.collectionId
+      }
+    } else if (storedCollection) {
+      // Check if stored collection still exists
+      const collection = collections.find(c => c.collectionId === storedCollection)
+      if (collection) {
+        currentCollectionId.value = storedCollection
+      } else {
+        // Stored collection doesn't exist, use default
+        const defaultCollection = collections.find(c => c.isDefault)
+        currentCollectionId.value = defaultCollection?.collectionId
+      }
+    } else {
+      // No stored/URL collection, use default
+      const defaultCollection = collections.find(c => c.isDefault)
+      currentCollectionId.value = defaultCollection?.collectionId
+    }
+    
+    // Set in API module
+    if (currentCollectionId.value) {
+      setCurrentCollection(currentCollectionId.value)
+      // Store in localStorage
+      localStorage.setItem('activeCollection', currentCollectionId.value)
+    }
+  } catch (error) {
+    console.error('Failed to initialize collection:', error)
+  }
+}
+
+// Watch for collection changes and update state
+watch(currentCollectionId, (newId, oldId) => {
+  if (newId) {
+    setCurrentCollection(newId)
+    localStorage.setItem('activeCollection', newId)
+    
+    // Update URL
+    const url = new URL(window.location)
+    url.searchParams.set('collection', newId)
+    window.history.pushState({}, '', url.toString())
+    
+    // Skip data reload during initial page load (restoreViewFromURL will handle it)
+    if (isInitializing.value) {
+      return
+    }
+    
+    // Clear current results immediately to prevent flash of old data
+    results.value = []
+    browseResults.value = []
+    bookmarkedResults.value = []
+    totalResults.value = 0
+    browseTotal.value = 0
+    bookmarksTotal.value = 0
+    
+    // Reload based on view
+    if (currentView.value === 'browse') {
+      loadBrowseResults()
+    } else if (currentView.value === 'bookmarks') {
+      loadBookmarkedDocuments()
+    } else if (currentView.value === 'search' && oldId) {
+      // Reload last search only if switching between collections (not initial load)
+      performSearch()
+    }
+    
+    // Reload stats
+    loadStats()
+  }
+})
+
+// Collection event handlers
+const handleCollectionChanged = (collectionId) => {
+  currentCollectionId.value = collectionId
+}
+
+const handleCreateCollection = () => {
+  showCollectionModal.value = true
+}
+
+const handleManageCollections = () => {
+  showCollectionModal.value = true
+}
+
+const handleCollectionCreated = () => {
+  // Reload collections in selector (it will auto-refresh)
+  loadStats()
+}
+
+const handleCollectionDeleted = (deletedId) => {
+  // If deleted collection was active, switch to default
+  if (currentCollectionId.value === deletedId) {
+    fetchCollections().then(collections => {
+      const defaultCollection = collections.find(c => c.isDefault)
+      if (defaultCollection) {
+        currentCollectionId.value = defaultCollection.collectionId
+      }
+    })
+  }
+  loadStats()
+}
+
+const handleCollectionEmptied = () => {
+  // Reload current view
+  if (currentView.value === 'browse') {
+    loadBrowseResults()
+  } else if (currentView.value === 'bookmarks') {
+    loadBookmarkedDocuments()
+  }
+  loadStats()
+}
 
 const currentView = ref('search') // 'search', 'clusters', or 'browse'
 
@@ -443,7 +601,18 @@ const currentPIIData = ref(null)
 const showScanNotification = ref(false)
 const scanNotificationData = ref({})
 const searchFormRef = ref(null)
+const collectionSelectorRef = ref(null)
 const activeFilters = ref([]) // Array of { type, value }
+
+// Load stats helper function
+const loadStats = async () => {
+  try {
+    const response = await api.get('/stats')
+    stats.value = response.data
+  } catch (error) {
+    console.error('Failed to load stats:', error)
+  }
+}
 
 // Browse mode state
 const browseResults = ref([])
@@ -538,8 +707,14 @@ const activeFiltersLabel = computed(() => {
 
 // Load stats on mount and restore filter from URL
 onMounted(async () => {
+  // Initialize collection first (must be done before any API calls)
+  await initializeCollection()
+  
   // Restore view and search state from URL
   await restoreViewFromURL()
+  
+  // Mark initialization complete - now watcher can trigger reloads
+  isInitializing.value = false
   
   // Handle browser back/forward buttons
   window.addEventListener('popstate', restoreViewFromURL)
@@ -1084,6 +1259,11 @@ const handleUploadSuccess = async () => {
   try {
     const response = await api.get('/stats')
     stats.value = response.data
+    
+    // Refresh collection selector to update document counts
+    if (collectionSelectorRef.value) {
+      collectionSelectorRef.value.refresh()
+    }
   } catch (error) {
     console.error('Failed to reload stats:', error)
   }
@@ -1589,6 +1769,14 @@ const handleClearFilter = async () => {
   align-items: center;
   flex-wrap: wrap;
   gap: 1rem;
+}
+
+.header-center {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-width: 280px;
 }
 
 .header-right {

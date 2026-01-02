@@ -2,7 +2,14 @@
 
 ## ✅ Working Features
 
-### 1. **Hybrid Search** (Semantic + Keyword)
+### 1. **Multi-Collection Management**
+Organize documents into separate collections with independent search scopes.
+- Create/delete collections via Web UI
+- Switch between collections with dropdown selector
+- Each collection has isolated documents and metadata
+- Default collection cannot be deleted (only emptied)
+
+### 2. **Hybrid Search** (Semantic + Keyword)
 Combines dense embeddings with sparse BM25-like vectors for superior relevance.
 
 **Example:**

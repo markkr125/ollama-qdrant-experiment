@@ -205,9 +205,9 @@ class RedisCache extends CacheStrategy {
  * Visualization Service
  */
 class VisualizationService {
-  constructor(qdrantClient, collectionName, cacheStrategy = 'memory') {
+  constructor(qdrantClient, defaultCollectionName, cacheStrategy = 'memory') {
     this.qdrantClient = qdrantClient;
-    this.collectionName = collectionName;
+    this.defaultCollectionName = defaultCollectionName; // Keep for backwards compat
     
     // Initialize cache strategy based on config
     if (cacheStrategy === 'redis') {
@@ -217,24 +217,32 @@ class VisualizationService {
       this.cache = new InMemoryCache();
     }
     
-    this.cacheKey = 'viz:scatter:main';
     this.cacheTTL = parseInt(process.env.VIZ_CACHE_TTL || '3600000'); // 1 hour default
     
     console.log(`[VisualizationService] Initialized with ${cacheStrategy} cache, TTL: ${this.cacheTTL}ms`);
   }
 
   /**
+   * Generate cache key for a collection
+   */
+  getCacheKey(collectionName, type = 'scatter') {
+    return `viz:${type}:${collectionName}`;
+  }
+
+  /**
    * Get scatter plot data (with caching)
    */
   async getScatterData(options = {}) {
+    const collectionName = options.collectionName || this.defaultCollectionName;
+    const cacheKey = this.getCacheKey(collectionName, 'scatter');
     const startTime = Date.now();
     
     // Check cache
     if (!options.forceRefresh) {
-      const cached = await this.cache.get(this.cacheKey);
+      const cached = await this.cache.get(cacheKey);
       if (cached) {
         const age = Date.now() - cached.metadata.generatedAt;
-        console.log(`[Viz] Cache hit (age: ${Math.round(age / 1000)}s)`);
+        console.log(`[Viz] Cache hit for ${collectionName} (age: ${Math.round(age / 1000)}s)`);
         return {
           ...cached,
           fromCache: true,
@@ -243,13 +251,13 @@ class VisualizationService {
       }
     }
 
-    console.log('[Viz] Cache miss, generating visualization...');
+    console.log(`[Viz] Cache miss for ${collectionName}, generating visualization...`);
     
     // Generate new visualization
-    const data = await this.generateVisualization(options);
+    const data = await this.generateVisualization({ ...options, collectionName });
     
     // Cache result
-    await this.cache.set(this.cacheKey, data, this.cacheTTL);
+    await this.cache.set(cacheKey, data, this.cacheTTL);
     
     const duration = Date.now() - startTime;
     console.log(`[Viz] Generation complete in ${duration}ms`);
@@ -265,14 +273,15 @@ class VisualizationService {
    * Generate visualization from scratch
    */
   async generateVisualization(options = {}) {
+    const collectionName = options.collectionName || this.defaultCollectionName;
     const limit = options.limit || 5000; // Max points to visualize
     
     try {
       // 1. Get collection info
-      const collectionInfo = await this.qdrantClient.getCollection(this.collectionName);
+      const collectionInfo = await this.qdrantClient.getCollection(collectionName);
       const totalPoints = collectionInfo.points_count;
       
-      console.log(`[Viz] Collection has ${totalPoints} points`);
+      console.log(`[Viz] Collection ${collectionName} has ${totalPoints} points`);
       
       if (totalPoints === 0) {
         return {
@@ -290,7 +299,7 @@ class VisualizationService {
       console.log(`[Viz] Fetching vectors (limit: ${limit})...`);
       const fetchLimit = Math.min(totalPoints, limit);
       
-      const scrollResult = await this.qdrantClient.scroll(this.collectionName, {
+      const scrollResult = await this.qdrantClient.scroll(collectionName, {
         limit: fetchLimit,
         with_payload: true,
         with_vector: true
@@ -404,6 +413,7 @@ class VisualizationService {
    * Get visualization for specific search results
    */
   async getSearchResultsVisualization(searchParams) {
+    const collectionName = searchParams.collectionName || this.defaultCollectionName;
     const startTime = Date.now();
     
     // Generate cache key from search params
@@ -414,7 +424,7 @@ class VisualizationService {
       const cached = await this.cache.get(cacheKey);
       if (cached) {
         const age = Date.now() - cached.metadata.generatedAt;
-        console.log(`[Viz] Search results cache hit (age: ${Math.round(age / 1000)}s)`);
+        console.log(`[Viz] Search results cache hit for ${collectionName} (age: ${Math.round(age / 1000)}s)`);
         return {
           ...cached,
           fromCache: true,
@@ -423,7 +433,7 @@ class VisualizationService {
       }
     }
 
-    console.log('[Viz] Generating search results visualization...');
+    console.log(`[Viz] Generating search results visualization for ${collectionName}...`);
 
     try {
       const { query, searchType, denseWeight, filters, limit = 5000, bookmarkIds } = searchParams;
@@ -442,7 +452,7 @@ class VisualizationService {
           return isNaN(num) ? id : num;
         });
         
-        searchResults = await this.qdrantClient.retrieve(this.collectionName, {
+        searchResults = await this.qdrantClient.retrieve(collectionName, {
           ids: ids,
           with_payload: true,
           with_vector: true
@@ -456,7 +466,7 @@ class VisualizationService {
         }
 
         // Perform vector search with filters
-        searchResults = await this.qdrantClient.search(this.collectionName, {
+        searchResults = await this.qdrantClient.search(collectionName, {
           vector: { name: 'dense', vector: embedding },
           filter: filters,
           limit: limit,
@@ -466,7 +476,7 @@ class VisualizationService {
       } else if (searchType === 'keyword') {
         // For keyword search, we'd need sparse vector search
         // For now, fall back to scroll with filters
-        const scrollResult = await this.qdrantClient.scroll(this.collectionName, {
+        const scrollResult = await this.qdrantClient.scroll(collectionName, {
           filter: filters,
           limit: limit,
           with_payload: true,
@@ -475,7 +485,7 @@ class VisualizationService {
         searchResults = scrollResult.points;
       } else {
         // Default: just get filtered documents
-        const scrollResult = await this.qdrantClient.scroll(this.collectionName, {
+        const scrollResult = await this.qdrantClient.scroll(collectionName, {
           filter: filters,
           limit: limit,
           with_payload: true,
@@ -613,12 +623,13 @@ class VisualizationService {
    * Hash search parameters for cache key
    */
   hashSearchParams(params) {
-    const { query, searchType, denseWeight, filters, limit } = params;
+    const { collectionName, query, searchType, denseWeight, filters, limit } = params;
     
     // Normalize filters by sorting keys
     const normalizedFilters = filters ? this.normalizeFilters(filters) : null;
     
     const normalized = JSON.stringify({
+      collection: collectionName || this.defaultCollectionName,
       q: query?.toLowerCase().trim() || '',
       type: searchType || 'semantic',
       weight: denseWeight || 0.7,

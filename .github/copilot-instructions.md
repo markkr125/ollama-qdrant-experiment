@@ -1,21 +1,28 @@
 # Ollama Qdrant Experiment - AI Agent Instructions
 
 ## Project Purpose
-This is a **vector database demonstration** showcasing Qdrant's advanced features: hybrid search (dense + sparse vectors), complex payload filtering, geo-queries, PII detection, and interactive 2D document visualization with UMAP dimensionality reduction.
+This is a **vector database demonstration** showcasing Qdrant's advanced features: hybrid search (dense + sparse vectors), complex payload filtering, geo-queries, PII detection, **multi-collection management**, and interactive 2D document visualization with UMAP dimensionality reduction.
 
 ## Architecture Overview
 
-### Three-Tier System
+### Three-Tier System with Collections
 ```
 Vue.js Web UI (port 5173) ←→ Express API (port 3001) ←→ Qdrant DB (port 6333) + Ollama (port 11434)
+                                    ↓
+                          Collections System
+                          - default (cannot delete)
+                          - user collections (UUID-based)
+                          - metadata in _system_collections
 ```
 
 **Key Files:**
 - `index.js` - CLI tool for embedding & search (`npm run embed`, `npm run search`)
-- `server.js` - Express API server with 29+ endpoints (2000+ lines)
-- `web-ui/src/App.vue` - Main Vue app with search/browse/bookmarks views (1000+ lines)
+- `server.js` - Express API server with **40+ endpoints** (3200+ lines) including collection management
+- `web-ui/src/App.vue` - Main Vue app with search/browse/bookmarks views + collection selector (1932 lines)
+- `web-ui/src/components/CollectionSelector.vue` - Header dropdown for switching collections
+- `web-ui/src/components/CollectionManagementModal.vue` - Full collection CRUD interface with search & pagination
 - `web-ui/src/components/UploadProgressModal.vue` - Real-time upload progress with animated bar, file-by-file status
-- `pii-detector.js` - Multi-method PII scanning (Ollama LLM, regex, hybrid, compromise)
+- `pii-detector.js` - Multi-method PII scanning (Ollama LLM, regex, hybrid, compromise) with Hebrew/RTL support
 - `visualization-service.js` - UMAP 768D→2D reduction with in-memory/Redis caching
 
 ### Data Flow for Search
@@ -84,6 +91,57 @@ node index.js geo 48.8566 2.3522 50000 "museums"
 See `main()` function for arg parsing with `process.argv`.
 
 ## Project-Specific Conventions
+
+### Collections System Architecture
+**Multi-tenant document isolation** - Each collection is a separate Qdrant collection with independent documents:
+
+**Collection Metadata Storage:**
+- Special `_system_collections` Qdrant collection stores metadata for all user collections
+- Each collection has: `collectionId` (UUID), `displayName`, `description`, `qdrantCollectionName`, `isDefault`, `createdAt`, `documentCount`
+- Default collection (ID: "default") cannot be deleted, only emptied
+
+**Collection Naming:**
+- Display name: User-friendly (e.g., "My Documents", "Work Files")
+- Qdrant name: Technical identifier (`default` or `col_{uuid}`)
+
+**Collection Middleware Pattern:**
+```javascript
+// server.js - All document/search endpoints use this
+app.post('/api/search/hybrid', collectionMiddleware, async (req, res) => {
+  // req.collectionId = UUID from query param or localStorage
+  // req.collection = metadata object from _system_collections
+  // req.qdrantCollection = actual Qdrant collection name
+});
+```
+
+**Frontend State Management:**
+```javascript
+// api.js - Axios interceptor automatically adds collection to all requests
+api.interceptors.request.use(config => {
+  if (currentCollectionId) {
+    config.params = { ...config.params, collection: currentCollectionId };
+  }
+  return config;
+});
+```
+
+**Collection Persistence:**
+- URL query param: `?collection=uuid` (highest priority)
+- localStorage: `activeCollection` (fallback)
+- Auto-initialized: Creates default collection if none exist
+
+**Component Integration:**
+- `CollectionSelector.vue` - Dropdown in header, shows document counts, quick actions
+- `CollectionManagementModal.vue` - Full CRUD with search (filters by name/description) and pagination (5 per page)
+- `FacetBar.vue` - Watches `currentCollectionId` prop, reloads facets on change
+- All search/browse operations scoped to current collection
+
+**API Endpoints for Collections:**
+- `GET /api/collections` - List all collections with metadata
+- `POST /api/collections` - Create new collection (validates uniqueness)
+- `DELETE /api/collections/:id` - Delete collection (rejects default)
+- `POST /api/collections/:id/empty` - Remove all documents, keep collection
+- `GET /api/collections/:id/stats` - Get document count + size
 
 ### Vector Storage Pattern (Hybrid Search)
 All documents have **dual vectors** stored in Qdrant:
@@ -161,6 +219,21 @@ If `CATEGORIZATION_MODEL` set (e.g., `llama3.2:latest`), server sends document t
 
 **Anti-Loop Protection**: Tracks occurrence count per finding, stops if same item appears >3 times (critical for non-English text).
 
+**JSON Parsing with Hebrew Support:
+Line-by-line processing to handle embedded quotes (e.g., תנ"ך):
+```javascript
+// Escape quotes within Hebrew text before JSON parsing
+const escapedLine = line.replace(/"([^"]*)":/g, (match, key) => {
+  const colonIndex = match.lastIndexOf(':');
+  const valueStart = colonIndex + 1;
+  if (valueStart < match.length) {
+    // Find value, escape internal quotes
+    return `"${key}":${escapedValue}`;
+  }
+  return match;
+});
+```
+
 **Usage:** Set `PII_DETECTION_METHOD=hybrid` in `.env`. Server auto-scans uploads, stores `pii_scan` in payload. Results show in modal with masked values.
 
 ### Visualization Caching Strategy
@@ -204,6 +277,18 @@ uploadJobs.set(jobId, {
 - Stop button with confirmation dialog
 - Close button always visible (modal can be closed, upload continues)
 - **No auto-open on refresh** - button shows "Upload in progress..." but modal stays closed
+- **Polling safeguards**: Uses watchers for `props.show` and `props.jobId` to prevent duplicate intervals
+- `startPolling()` calls `stopPolling()` first to ensure only one interval runs
+
+**RTL Text Support:**
+Hebrew and other right-to-left language filenames displayed correctly:
+```css
+.file-name {
+  unicode-bidi: plaintext;  /* Auto-detect text direction */
+  direction: ltr;           /* Default LTR, overridden for RTL */
+  text-align: left;
+}
+```
 
 **Crash-resistant:** Job state in-memory (not persisted). Job ID persisted in localStorage to survive page refresh.
 
@@ -504,7 +589,28 @@ Endpoint: `POST http://localhost:11434/api/embed`
 { embeddings: [[0.123, -0.456, ...]] }  // 768 dimensions
 ```
 
-**Error handling:** Check `error.response.status` - 404 means model not pulled.
+**Model Context Size Detection:**
+On server startup, fetches model's `num_ctx` parameter:
+```bash
+curl http://localhost:11434/api/show -d '{"name": "embeddinggemma:latest"}'
+# Response: "num_ctx 2048" → MODEL_MAX_CONTEXT_TOKENS = 2048
+```
+
+**Document Size Validation:**
+Before embedding, checks if document exceeds model context limit:
+```javascript
+const estimatedTokens = Math.ceil(content.length / 4); // ~4 chars per token
+if (estimatedTokens > MODEL_MAX_CONTEXT_TOKENS) {
+  throw new Error(`Document too large: ${estimatedTokens} tokens exceeds ${MODEL_MAX_CONTEXT_TOKENS}`);
+}
+```
+Returns clear error to client instead of hanging. No automatic truncation to preserve document integrity.
+
+**Error handling:** 
+- `ECONNREFUSED` - Ollama service not running
+- `ETIMEDOUT` - Request took >5 minutes (embedding timeout)
+- Status 400 - Document exceeds model context limit
+- Status 404 - Model not pulled
 
 ### Qdrant Collection Schema
 Created in `index.js:initializeCollection()`:
@@ -626,11 +732,56 @@ curl http://localhost:11434/api/tags    # Ollama models
 ### Visualization slow/hanging
 UMAP reduction is CPU-intensive (no GPU support in umap-js). Expected: ~10s for 100 docs. Use caching!
 
+### Facets not updating on collection change
+Check that component has `currentCollectionId` prop and watcher:
+```javascript
+// FacetBar.vue pattern
+props: ['currentCollectionId'],
+watch: {
+  currentCollectionId: {
+    handler() {
+      this.loadFacets(); // Reload when collection changes
+    },
+    immediate: true
+  }
+}
+```
+
+### Upload progress polling spam
+Ensure only one polling interval active:
+```javascript
+// UploadProgressModal.vue pattern
+watch: {
+  show(newVal) {
+    if (newVal && this.jobId) {
+      this.startPolling(); // startPolling() must call stopPolling() first
+    } else {
+      this.stopPolling();
+    }
+  },
+  jobId(newVal) {
+    if (newVal && this.show) {
+      this.startPolling();
+    }
+  }
+}
+```
+
 ### Type Coercion Patterns
 Always use radix parameter for `parseInt`:
 ```javascript
 parseInt(value, 10)  // NOT parseInt(value) - avoid octal issues
 parseFloat(value)    // For prices, ratings, coordinates
+```
+
+**Document ID Handling:**
+Collection system introduced UUIDs alongside numeric IDs. Handle both:
+```javascript
+// Safe parsing for mixed ID types
+const ids = req.query.ids.split(',').map(id => {
+  const parsed = parseInt(id, 10);
+  return isNaN(parsed) ? id : parsed; // Return string if not numeric
+});
 ```
 
 ### Error Response Format

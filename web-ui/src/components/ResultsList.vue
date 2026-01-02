@@ -482,6 +482,10 @@ const props = defineProps({
   browseSortOrder: {
     type: String,
     default: 'asc'
+  },
+  currentCollectionId: {
+    type: String,
+    default: null
   }
 })
 
@@ -758,7 +762,9 @@ const loadClusterVisualization = async (forceRefresh = false) => {
       payload.bookmarkIds = props.results.map(r => r.id)
     }
     
-    const response = await fetch(`${API_URL}/api/visualize/search-results`, {
+    // Build URL with collection parameter
+    const collectionParam = props.currentCollectionId ? `?collection=${props.currentCollectionId}` : ''
+    const response = await fetch(`${API_URL}/api/visualize/search-results${collectionParam}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)

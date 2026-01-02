@@ -27,13 +27,15 @@
 │                 http://localhost:3001                       │
 │                                                              │
 │  ┌──────────────────────────────────────────────────────┐  │
-│  │ server.js                                             │  │
+│  │ server.js (40+ endpoints)                             │  │
 │  │                                                        │  │
 │  │  Routes:                                              │  │
+│  │  • Collection Middleware (all search/doc routes)    │  │
 │  │  • POST /api/search/semantic                         │  │
 │  │  • POST /api/search/hybrid                           │  │
 │  │  • POST /api/search/location                         │  │
 │  │  • POST /api/search/geo                              │  │
+│  │  • GET/POST/DELETE /api/collections                  │  │
 │  │  • GET  /api/stats                                   │  │
 │  │  • GET  /api/health                                  │  │
 │  └────────────────┬─────────────────┬───────────────────┘  │

@@ -290,6 +290,10 @@ const props = defineProps({
   activeFilters: {
     type: Array,
     default: () => []
+  },
+  currentCollectionId: {
+    type: [String, null],
+    default: null
   }
 })
 
@@ -464,8 +468,7 @@ const handleClickOutside = (e) => {
   }
 }
 
-onMounted(async () => {
-  // Load all facets from API
+const loadFacets = async () => {
   try {
     const response = await api.get('/facets')
     const data = response.data
@@ -479,9 +482,21 @@ onMounted(async () => {
   } catch (error) {
     console.error('Failed to load facets:', error)
   }
+}
+
+onMounted(async () => {
+  // Load all facets from API
+  await loadFacets()
   
   // Add click listener to close dropdowns
   document.addEventListener('click', handleClickOutside)
+})
+
+// Watch for collection changes and reload facets
+watch(() => props.currentCollectionId, async (newId, oldId) => {
+  if (newId !== oldId) {
+    await loadFacets()
+  }
 })
 
 // Cleanup

@@ -59,8 +59,11 @@
 ### API Endpoints
 - [x] GET /api/health - Health check
 - [x] GET /api/stats - Collection statistics
-- [x] GET /api/collections - List collections
-- [x] GET /api/collection/:name/info - Collection details
+- [x] GET /api/collections - List all collections
+- [x] POST /api/collections - Create new collection
+- [x] DELETE /api/collections/:id - Delete collection
+- [x] POST /api/collections/:id/empty - Empty collection
+- [x] GET /api/collections/:id/stats - Collection statistics
 - [x] POST /api/search/semantic - Semantic search
 - [x] POST /api/search/hybrid - Hybrid search
 - [x] POST /api/search/location - Location search
@@ -240,11 +243,11 @@ npm run mixed          # Mixed dataset examples
 - [ ] Add export functionality (CSV/JSON)
 
 ### Advanced Features
-- [ ] Saved searches/bookmarks
+- [x] Saved searches/bookmarks
 - [ ] User authentication
-- [ ] Multi-collection support
+- [x] Multi-collection support
 - [ ] Batch operations
-- [ ] Advanced visualizations
+- [x] Advanced visualizations (UMAP clusters)
 - [ ] Comparison view
 
 ### Production Ready

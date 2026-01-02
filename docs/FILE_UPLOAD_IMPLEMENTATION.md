@@ -228,13 +228,74 @@ Content-Disposition: form-data; name="metadata"
 - Monitor disk space if implementing file caching
 - Configure proper CORS headers for production domain
 
+## Technical Improvements
+
+### Model Context Size Detection
+Automatic detection of embedding model's token limit on server startup:
+```javascript
+// server.js - Fetches model's num_ctx parameter
+const response = await axios.post(`${OLLAMA_URL.replace('/api/embed', '/api/show')}`, {
+  name: MODEL
+});
+MODEL_MAX_CONTEXT_TOKENS = response.data.num_ctx || 2048;
+```
+
+### Document Size Validation
+Pre-embedding validation prevents hanging on oversized documents:
+```javascript
+// Estimate tokens (4 chars ≈ 1 token)
+const estimatedTokens = Math.ceil(content.length / 4);
+if (estimatedTokens > MODEL_MAX_CONTEXT_TOKENS) {
+  throw new Error(`Document too large: ${estimatedTokens} tokens exceeds ${MODEL_MAX_CONTEXT_TOKENS}`);
+}
+```
+
+### Upload Progress Polling
+Fixed duplicate polling intervals with proper Vue watchers:
+```javascript
+// UploadProgressModal.vue
+watch: {
+  show(newVal) {
+    if (newVal && this.jobId) {
+      this.startPolling(); // Calls stopPolling() first
+    } else {
+      this.stopPolling();
+    }
+  },
+  jobId(newVal) {
+    if (newVal && this.show) {
+      this.startPolling();
+    }
+  }
+}
+```
+
+### RTL Text Support
+Hebrew and Arabic filenames display correctly:
+```css
+.file-name {
+  unicode-bidi: plaintext;  /* Auto-detect text direction */
+  direction: ltr;
+  text-align: left;
+}
+```
+
+### Error Handling
+Specific error messages for common issues:
+- **ECONNREFUSED**: Ollama service not running
+- **ETIMEDOUT**: Embedding request timeout (5 minutes)
+- **400**: Document exceeds model context limit
+- **404**: Model not pulled
+
 ## Conclusion
 
-The multi-format file upload feature is fully implemented and ready for testing. Users can now:
+The multi-format file upload feature is fully implemented with robust error handling and internationalization support. Users can now:
 1. Upload documents in 5 different formats
 2. Choose between text input and file upload
 3. Automatically extract metadata from content
 4. Override metadata manually when needed
 5. Search uploaded documents immediately
+6. Handle documents in Hebrew, Arabic, and other RTL languages
+7. Receive clear error messages for oversized documents
 
 All code changes are complete, documented, and follow best practices.

@@ -119,8 +119,11 @@ cd web-ui && npm run dev
 |--------|----------|-------------|
 | GET | /api/health | Health check |
 | GET | /api/stats | Collection statistics |
-| GET | /api/collections | List collections |
-| GET | /api/collection/:name/info | Collection details |
+| GET | /api/collections | List all collections |
+| POST | /api/collections | Create new collection |
+| DELETE | /api/collections/:id | Delete collection |
+| POST | /api/collections/:id/empty | Empty collection |
+| GET | /api/collections/:id/stats | Collection statistics |
 | POST | /api/search/semantic | Semantic search |
 | POST | /api/search/hybrid | Hybrid search |
 | POST | /api/search/location | Location search |
@@ -160,10 +163,10 @@ cd web-ui && npm run dev
 
 ### Features
 - [ ] Search history
-- [ ] Saved searches/bookmarks
+- [x] Saved searches/bookmarks
 - [ ] Export results (CSV/JSON)
 - [ ] Dark mode toggle
-- [ ] Multi-collection support
+- [x] Multi-collection support
 - [ ] User authentication
 - [ ] Batch operations
 

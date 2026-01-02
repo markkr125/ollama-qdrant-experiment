@@ -73,7 +73,7 @@
 </template>
 
 <script>
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { getUploadJobStatus } from '../api';
 
 export default {
@@ -161,6 +161,9 @@ export default {
     }
 
     function startPolling() {
+      // Stop any existing polling first
+      stopPolling();
+      
       // Poll immediately
       pollJobStatus();
       // Then poll every second
@@ -201,11 +204,24 @@ export default {
       stopPolling();
     });
 
-    // Watch for prop changes
-    const unwatchShow = () => {};
-    if (props.show && props.jobId) {
-      startPolling();
-    }
+    // Watch for prop changes - start/stop polling based on show state
+    watch(() => props.show, (newShow) => {
+      if (newShow && props.jobId) {
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    });
+
+    // Watch for jobId changes
+    watch(() => props.jobId, (newJobId, oldJobId) => {
+      if (newJobId !== oldJobId) {
+        stopPolling();
+        if (props.show && newJobId) {
+          startPolling();
+        }
+      }
+    });
 
     return {
       jobStatus,
@@ -480,6 +496,9 @@ export default {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  unicode-bidi: plaintext;
+  direction: ltr;
+  text-align: left;
 }
 
 .file-error {
