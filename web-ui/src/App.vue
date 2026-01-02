@@ -250,6 +250,14 @@ const initializeCollection = async () => {
   const urlCollection = urlParams.get('collection')
   const storedCollection = localStorage.getItem('activeCollection')
   
+  // Determine which collection to use BEFORE fetching (to avoid default collection flash)
+  let targetCollectionId = urlCollection || storedCollection || null
+  
+  // Set it immediately in the API module if we have one from URL/storage
+  if (targetCollectionId) {
+    setCurrentCollection(targetCollectionId)
+  }
+  
   try {
     const collections = await fetchCollections()
     
@@ -262,6 +270,10 @@ const initializeCollection = async () => {
         // Invalid collection in URL, use default
         const defaultCollection = collections.find(c => c.isDefault)
         currentCollectionId.value = defaultCollection?.collectionId
+        // Update API module with correct collection
+        if (defaultCollection) {
+          setCurrentCollection(defaultCollection.collectionId)
+        }
       }
     } else if (storedCollection) {
       // Check if stored collection still exists
@@ -272,17 +284,23 @@ const initializeCollection = async () => {
         // Stored collection doesn't exist, use default
         const defaultCollection = collections.find(c => c.isDefault)
         currentCollectionId.value = defaultCollection?.collectionId
+        // Update API module with correct collection
+        if (defaultCollection) {
+          setCurrentCollection(defaultCollection.collectionId)
+        }
       }
     } else {
       // No stored/URL collection, use default
       const defaultCollection = collections.find(c => c.isDefault)
       currentCollectionId.value = defaultCollection?.collectionId
+      // Set in API module
+      if (defaultCollection) {
+        setCurrentCollection(defaultCollection.collectionId)
+      }
     }
     
-    // Set in API module
+    // Store in localStorage
     if (currentCollectionId.value) {
-      setCurrentCollection(currentCollectionId.value)
-      // Store in localStorage
       localStorage.setItem('activeCollection', currentCollectionId.value)
     }
   } catch (error) {
