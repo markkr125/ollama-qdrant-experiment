@@ -1,5 +1,7 @@
 # Ollama Qdrant Experiment - AI Agent Instructions
 
+> **📝 Meta-Instruction:** When implementing new features or fixing bugs, update this file with architectural patterns, debugging tips, and integration points. Keep it current so future AI assistants understand the system's evolution.
+
 ## Project Purpose
 This is a **vector database demonstration** showcasing Qdrant's advanced features: hybrid search (dense + sparse vectors), complex payload filtering, geo-queries, PII detection, **multi-collection management**, and interactive 2D document visualization with UMAP dimensionality reduction.
 
@@ -129,11 +131,13 @@ api.interceptors.request.use(config => {
 - URL query param: `?collection=uuid` (highest priority)
 - localStorage: `activeCollection` (fallback)
 - Auto-initialized: Creates default collection if none exist
+- **Early API setup**: Collection ID set in api.js BEFORE any API calls to prevent flash of default collection data
 
 **Component Integration:**
-- `CollectionSelector.vue` - Dropdown in header, shows document counts, quick actions
+- `CollectionSelector.vue` - Dropdown in header, shows document counts, quick actions, exposes `refresh()` method
 - `CollectionManagementModal.vue` - Full CRUD with search (filters by name/description) and pagination (5 per page)
 - `FacetBar.vue` - Watches `currentCollectionId` prop, reloads facets on change
+- `ResultsList.vue` - Receives `currentCollectionId` prop, passes to visualization API
 - All search/browse operations scoped to current collection
 
 **API Endpoints for Collections:**
@@ -745,6 +749,29 @@ watch: {
     immediate: true
   }
 }
+```
+
+### Collection flash on page load (seeing default collection briefly)
+**Problem:** API calls happen before collection ID is set in api.js interceptor
+**Solution:** Set collection in api.js immediately when determined, before any API calls:
+```javascript
+// App.vue initializeCollection() pattern
+const targetCollectionId = urlCollection || storedCollection || null
+if (targetCollectionId) {
+  setCurrentCollection(targetCollectionId) // BEFORE fetchCollections()
+}
+const collections = await fetchCollections() // Now has correct collection
+```
+
+**Initialization flag pattern:**
+```javascript
+const isInitializing = ref(true)
+watch(currentCollectionId, (newId, oldId) => {
+  if (isInitializing.value) return // Skip watcher during initial load
+  // ... reload data for collection switch
+})
+// In onMounted, after restoreViewFromURL:
+isInitializing.value = false // Now watcher can trigger reloads
 ```
 
 ### Upload progress polling spam
