@@ -6,7 +6,8 @@ export default defineConfig({
   // Running in parallel causes cross-test interference (e.g., one test stopping another's upload).
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
+  // CI retries can hide failures and waste time; keep this low.
+  retries: process.env.CI ? 1 : 0,
   workers: 1,
   reporter: process.env.CI ? [['line'], ['github']] : 'html',
   use: {
@@ -25,7 +26,7 @@ export default defineConfig({
     command: 'npm run webui',
     url: 'http://localhost:5173',
     reuseExistingServer: !process.env.CI,
-    timeout: 120000,
+    timeout: 90000,
     stdout: 'pipe',
     stderr: 'pipe'
   }
