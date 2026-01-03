@@ -7,6 +7,34 @@ const {
   CompromisePIIDetector
 } = require('../../../pii-detector');
 
+const fs = require('fs');
+const path = require('path');
+
+function buildAsyncIterableFromJsonlFixture(fixtureName) {
+  const fixturePath = path.join(
+    __dirname,
+    '..',
+    '..',
+    'fixtures',
+    'mock-responses',
+    fixtureName
+  );
+  const lines = fs
+    .readFileSync(fixturePath, 'utf8')
+    .split('\n')
+    .filter(line => line.trim().length > 0);
+
+  const chunks = lines.map(line => Buffer.from(line + '\n'));
+
+  return {
+    [Symbol.asyncIterator]: async function* () {
+      for (const chunk of chunks) {
+        yield chunk;
+      }
+    }
+  };
+}
+
 describe('PIIResult', () => {
   test('creates result with findings', () => {
     const result = new PIIResult();
@@ -140,34 +168,80 @@ describe('OllamaPIIDetector', () => {
   });
 
   test('parses Ollama API response correctly', async () => {
-    // Mock streaming response from Ollama
-    const mockStream = [
-      JSON.stringify({ message: { content: '[\n  {' } }),
-      JSON.stringify({ message: { content: '\n    "type": "email",' } }),
-      JSON.stringify({ message: { content: '\n    "value": "test@example.com",' } }),
-      JSON.stringify({ message: { content: '\n    "confidence": 0.95' } }),
-      JSON.stringify({ message: { content: '\n  }\n]' } }),
-      JSON.stringify({ done: true })
-    ].map(s => Buffer.from(s + '\n'));
+    const asyncIterable = buildAsyncIterableFromJsonlFixture(
+      'ollama-pii-detection.stream.jsonl'
+    );
 
-    // Create async iterable from array
-    const asyncIterable = {
-      [Symbol.asyncIterator]: async function* () {
-        for (const chunk of mockStream) {
-          yield chunk;
-        }
-      }
-    };
+    axiosMock.mockResolvedValue({ data: asyncIterable });
 
-    axiosMock.mockResolvedValue({
-      data: asyncIterable
-    });
+    const content = [
+      'Name: John Smith',
+      'Email: test@example.com',
+      'Phone: +14155552671',
+      'Address: 123 Main Street',
+      'Card: 4111-1111-1111-1111',
+      'Last 4: 1111'
+    ].join('\n');
 
-    const result = await detector.detect('Contact me at test@example.com');
+    const result = await detector.detect(content, { skipValidation: true });
 
     expect(result).toBeDefined();
     expect(result.detectionMethod).toBe('ollama');
-    // May or may not find PII depending on parsing - just verify it doesn't crash
+    expect(result.hasPII).toBe(true);
+    expect(result.piiDetails.length).toBe(6);
+    expect(new Set(result.piiTypes)).toEqual(
+      new Set([
+        'name',
+        'email',
+        'phone',
+        'address',
+        'credit_card',
+        'credit_card_last4'
+      ])
+    );
+
+    const values = result.piiDetails.map(d => d.value);
+    expect(values).toContain('John Smith');
+    expect(values).toContain('test@example.com');
+    expect(values).toContain('+14155552671');
+    expect(values).toContain('123 Main Street');
+    expect(values).toContain('4111-1111-1111-1111');
+    expect(values).toContain('1111');
+  });
+
+  test('applies validation agent results (removes invalid findings)', async () => {
+    const detectionIterable = buildAsyncIterableFromJsonlFixture(
+      'ollama-pii-detection.stream.jsonl'
+    );
+    const validationIterable = buildAsyncIterableFromJsonlFixture(
+      'ollama-pii-validation.stream.jsonl'
+    );
+
+    axiosMock
+      .mockResolvedValueOnce({ data: detectionIterable })
+      .mockResolvedValueOnce({ data: validationIterable });
+
+    const content = [
+      'Name: John Smith',
+      'Email: test@example.com',
+      'Phone: +14155552671',
+      'Address: 123 Main Street',
+      'Card: 4111-1111-1111-1111',
+      'Last 4: 1111'
+    ].join('\n');
+
+    const result = await detector.detect(content);
+
+    expect(result).toBeDefined();
+    expect(result.detectionMethod).toBe('ollama');
+    expect(result.hasPII).toBe(true);
+
+    // Validation fixture rejects index 2 (phone)
+    const types = new Set(result.piiTypes);
+    expect(types.has('phone')).toBe(false);
+    expect(types.has('email')).toBe(true);
+    expect(types.has('credit_card')).toBe(true);
+    expect(result.piiDetails.find(d => d.type === 'phone')).toBeUndefined();
   });
 
   test('handles malformed JSON response', async () => {
