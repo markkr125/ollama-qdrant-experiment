@@ -1,5 +1,21 @@
 # Multi-Format File Upload - Implementation Summary
 
+## Table of Contents
+- [Overview](#overview)
+- [Backend Changes](#backend-changes)
+- [Frontend Changes](#frontend-changes)
+- [Documentation Updates](#documentation-updates)
+- [Testing](#testing)
+- [Error Handling](#error-handling)
+- [API Request Examples](#api-request-examples)
+- [Performance Considerations](#performance-considerations)
+- [Future Enhancements](#future-enhancements)
+- [Security Notes](#security-notes)
+- [Dependencies Security](#dependencies-security)
+- [Deployment Notes](#deployment-notes)
+- [Technical Improvements](#technical-improvements)
+- [Conclusion](#conclusion)
+
 ## Overview
 Enhanced the Ollama-Qdrant web UI with multi-format document upload capabilities, supporting TXT, JSON, PDF, DOCX, and DOC files.
 

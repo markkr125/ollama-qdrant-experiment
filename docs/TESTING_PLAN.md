@@ -1,5 +1,25 @@
 # Testing Plan for Vector Retriever
 
+## Table of Contents
+- [Overview](#overview)
+- [Current State](#current-state)
+- [Testing Stack Recommendations](#testing-stack-recommendations)
+- [Test Structure](#test-structure)
+- [Phase 1: Unit Tests (Service Layer)](#phase-1-unit-tests-service-layer)
+- [Phase 2: Integration Tests (API Endpoints)](#phase-2-integration-tests-api-endpoints)
+- [Phase 3: Frontend Unit Tests (Vue Components)](#phase-3-frontend-unit-tests-vue-components)
+- [Phase 4: End-to-End Tests](#phase-4-end-to-end-tests)
+- [Phase 5: Test Infrastructure](#phase-5-test-infrastructure)
+- [Phase 6: Test Data and Fixtures](#phase-6-test-data-and-fixtures)
+- [Implementation Timeline](#implementation-timeline)
+- [NPM Scripts to Add](#npm-scripts-to-add)
+- [Coverage Goals](#coverage-goals)
+- [Key Testing Principles](#key-testing-principles)
+- [Challenges and Solutions](#challenges-and-solutions)
+- [Success Metrics](#success-metrics)
+- [Next Steps](#next-steps)
+- [Maintenance Strategy](#maintenance-strategy)
+
 ## Overview
 This document outlines a comprehensive testing strategy for the Vector Retriever project, covering backend API, frontend Vue.js components, service modules, and integration tests.
 

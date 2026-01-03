@@ -1,5 +1,21 @@
 # Vector Retriever - Complete Summary
 
+## Table of Contents
+- [🎯 What This Project Demonstrates](#-what-this-project-demonstrates)
+- [📚 Dataset: 27 Documents](#-dataset-27-documents)
+- [🚀 Quick Commands](#-quick-commands)
+- [💡 Key Insights](#-key-insights)
+- [🏗️ Architecture](#️-architecture)
+- [📖 Documentation](#-documentation)
+- [🎬 Demo Scenarios](#-demo-scenarios)
+- [🔬 Technical Highlights](#-technical-highlights)
+- [🎯 Real-World Applications](#-real-world-applications)
+- [📊 Performance Characteristics](#-performance-characteristics)
+- [✨ Unique Features](#-unique-features)
+- [🚦 Next Steps](#-next-steps)
+- [🏆 Key Achievements](#-key-achievements)
+- [📄 License](#-license)
+
 ## 🎯 What This Project Demonstrates
 
 This is a **comprehensive showcase** of Qdrant's advanced features:
@@ -277,11 +293,6 @@ To extend this project:
 ✅ Runnable examples for every feature
 ✅ Production-grade code structure
 
-## 🤝 Credits
-
-- **Qdrant**: Vector database engine
-- **Ollama**: Local embeddings server
-- **embeddinggemma**: Google's embedding model
 
 ## 📄 License
 

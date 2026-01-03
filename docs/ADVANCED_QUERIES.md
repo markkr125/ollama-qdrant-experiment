@@ -1,5 +1,14 @@
 # 🎯 Advanced Location Search & Complex Queries Guide
 
+## Table of Contents
+- [Location Search Methods](#location-search-methods)
+- [Complex Document Examples](#complex-document-examples)
+- [Advanced Query Examples](#advanced-query-examples)
+- [Real-World Use Cases](#real-world-use-cases)
+- [Dataset Statistics](#dataset-statistics)
+- [Running Examples](#running-examples)
+- [Key Insights](#key-insights)
+
 ## Location Search Methods
 
 ### 1. **City/Location Name Filter**

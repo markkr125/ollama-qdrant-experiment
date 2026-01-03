@@ -2,6 +2,21 @@
 
 > **📝 Meta-Instruction:** When implementing new features or fixing bugs, update this file with architectural patterns, debugging tips, and integration points. Keep it current so future AI assistants understand the system's evolution.
 
+## Table of Contents
+- [Project Purpose](#project-purpose)
+- [Architecture Overview](#architecture-overview)
+- [Critical Developer Workflows](#critical-developer-workflows)
+- [Project-Specific Conventions](#project-specific-conventions)
+- [Express API Endpoints (29 routes)](#express-api-endpoints-29-routes)
+- [Vue.js UI Architecture](#vuejs-ui-architecture)
+- [Integration Points](#integration-points)
+- [Common Debugging Patterns](#common-debugging-patterns)
+- [File Upload Processing](#file-upload-processing)
+- [Testing Infrastructure](#testing-infrastructure)
+- [Key Configuration (.env)](#key-configuration-env)
+- [When Modifying Code](#when-modifying-code)
+- [Documentation Locations](#documentation-locations)
+
 ## Project Purpose
 This is a **vector database demonstration** showcasing Qdrant's advanced features: hybrid search (dense + sparse vectors), complex payload filtering, geo-queries, PII detection, **multi-collection management**, and interactive 2D document visualization with UMAP dimensionality reduction.
 
@@ -1032,3 +1047,50 @@ Update `.env` MODEL, re-run `npm run embed` (re-embeds all documents).
 - `docs/PII_DETECTION.md` - PII scanning guide
 - `docs/TESTING_PLAN.md` - Testing strategy and roadmap
 - `docs/TEST_IMPLEMENTATION_COMPLETE.md` - Summary of the implemented test suite
+
+## Documentation Standards
+
+### Table of Contents Guidelines
+When creating or updating documentation files, follow these conventions:
+
+**When to add a TOC:**
+- Documents with >200 lines
+- Documents with 5+ main sections (##)
+- Complex multi-topic documents requiring navigation
+
+**TOC Format:**
+- Use markdown list with anchor links
+- Place after document title and brief description, before first main section
+- Format: `- [Section Name](#section-name)`
+- For emoji sections: `- [🎯 Overview](#-overview)` (emoji preserved, rest lowercase with hyphens)
+
+**Section Anchor Rules:**
+- Convert to lowercase
+- Replace spaces with hyphens
+- Remove special characters (except emojis at start)
+- Examples:
+  - `## Key Features` → `#key-features`
+  - `## 🎯 Overview` → `#-overview`
+  - `## Phase 1: Unit Tests` → `#phase-1-unit-tests`
+
+**Maintenance:**
+- Update TOC when adding/removing/renaming sections
+- Verify all anchor links work after structural changes
+- Keep TOC synchronized with actual document structure
+
+**Example TOC Structure:**
+```markdown
+# Document Title
+
+Brief description of what this document covers.
+
+## Table of Contents
+- [Section One](#section-one)
+- [Section Two](#section-two)
+  - Note: Subsections (###) typically not included in TOC unless document is very long
+- [Configuration](#configuration)
+- [Troubleshooting](#troubleshooting)
+
+## Section One
+...
+```

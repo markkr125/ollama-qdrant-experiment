@@ -440,6 +440,12 @@ cp .env.example .env
 
 ### Supported Embedding Models
 
+**Any embedding model from Ollama is supported!** The table below shows popular recommendations, but you can use any model from the [Ollama Library](https://ollama.com/search?c=embedding).
+
+> **💡 Performance Tip:** Larger models generally produce better quality embeddings and search results. The tradeoff is slower embedding speed and more disk space.
+
+#### Recommended Models
+
 | Model | Model Size | Context Window | Dimensions | Parameters | Best For |
 |-------|-----------|----------------|------------|------------|----------|
 | `qwen3-embedding:0.6b` | 639MB | **32K tokens** | 768-4096 (flexible) | 596M | **Large documents, long-form content, code** |
@@ -463,6 +469,14 @@ cp .env.example .env
 **Dimension Compatibility:**
 - If using a model with dimensions other than 768, you must update the collection schema
 - See the Troubleshooting section for "Wrong vector dimensions"
+
+**Using Other Models:**
+- Browse available models at [ollama.com/search?c=embedding](https://ollama.com/search?c=embedding)
+- Pull any model: `ollama pull <model-name>`
+- Update your `.env` file: `MODEL=<model-name>`
+- Re-embed your documents: `npm run embed`
+
+> **⚠️ Important:** When changing models, you must re-embed all documents as embeddings from different models are not compatible.
 
 > **💡 Tip:** The application automatically detects your model's context limit on startup and validates document sizes before embedding.
 

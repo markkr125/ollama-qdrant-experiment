@@ -1,5 +1,17 @@
 # Document Cluster Visualization
 
+## Table of Contents
+- [Overview](#overview)
+- [Features](#features)
+- [How to Use](#how-to-use)
+- [Technical Implementation](#technical-implementation)
+- [Configuration](#configuration)
+- [Troubleshooting](#troubleshooting)
+- [Best Practices](#best-practices)
+- [Future Enhancements](#future-enhancements)
+- [Related Documentation](#related-documentation)
+- [Technical References](#technical-references)
+
 ## Overview
 
 The Document Cluster Visualization feature provides an interactive 2D scatter plot that visualizes your document collection using dimensionality reduction. Documents with similar semantic content appear closer together, making it easy to discover patterns, clusters, and outliers in your data.

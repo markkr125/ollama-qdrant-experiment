@@ -2,6 +2,20 @@
 
 Complete guide to setting up and using the Ollama-Qdrant Web UI.
 
+## Table of Contents
+- [🚀 Quick Start (5 minutes)](#-quick-start-5-minutes)
+- [📖 Detailed Setup](#-detailed-setup)
+- [🎯 Using the Web UI](#-using-the-web-ui)
+- [🎨 UI Features](#-ui-features)
+- [🔧 Configuration](#-configuration)
+- [🐛 Troubleshooting](#-troubleshooting)
+- [📊 API Reference](#-api-reference)
+- [🚢 Production Deployment](#-production-deployment)
+- [💡 Tips & Best Practices](#-tips--best-practices)
+- [🎓 Learning Resources](#-learning-resources)
+- [🤝 Contributing](#-contributing)
+- [📝 License](#-license)
+
 ## 🚀 Quick Start (5 minutes)
 
 ### Prerequisites Check

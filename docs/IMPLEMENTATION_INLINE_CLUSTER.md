@@ -1,5 +1,18 @@
 # Implementation Summary: Inline Cluster View for Search Results
 
+## Table of Contents
+- [What Was Implemented](#what-was-implemented)
+- [Files Modified](#files-modified)
+- [Features Implemented](#features-implemented)
+- [Architecture Decisions](#architecture-decisions)
+- [Testing Recommendations](#testing-recommendations)
+- [Known Limitations](#known-limitations)
+- [Performance Metrics](#performance-metrics)
+- [Future Enhancements](#future-enhancements)
+- [Related Files](#related-files)
+- [Commit Message Suggestion](#commit-message-suggestion)
+- [Verification Steps](#verification-steps)
+
 ## What Was Implemented
 
 Added an expandable cluster visualization panel directly within the search results page, allowing users to see a 2D scatter plot of their filtered search results without leaving the search interface.

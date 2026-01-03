@@ -1,5 +1,18 @@
 # Web UI Architecture
 
+## Table of Contents
+- [System Overview](#system-overview)
+- [Data Flow](#data-flow)
+- [Component Hierarchy](#component-hierarchy)
+- [File Structure](#file-structure)
+- [Technology Stack](#technology-stack)
+- [Communication Patterns](#communication-patterns)
+- [Security Considerations](#security-considerations)
+- [Performance](#performance)
+- [Development Workflow](#development-workflow)
+- [Deployment Options](#deployment-options)
+- [Monitoring](#monitoring)
+
 ## System Overview
 
 ```

@@ -1,5 +1,22 @@
 # PII Detection & GDPR Compliance
 
+## Table of Contents
+- [🔒 Overview](#-overview)
+- [🎯 Key Features](#-key-features)
+- [⚙️ Configuration](#️-configuration)
+- [🧠 Dual-Agent Validation (Hybrid Method)](#-dual-agent-validation-hybrid-method)
+- [🛡️ Advanced Features](#️-advanced-features)
+- [🎨 Web UI Features](#-web-ui-features)
+- [📊 Bulk Scanning](#-bulk-scanning)
+- [🔍 Search & Filter Examples](#-search--filter-examples)
+- [🔧 Technical Implementation](#-technical-implementation)
+- [📈 Performance Considerations](#-performance-considerations)
+- [🚨 Known Limitations](#-known-limitations)
+- [🔐 GDPR Compliance Use Cases](#-gdpr-compliance-use-cases)
+- [📚 Related Documentation](#-related-documentation)
+- [🎓 Best Practices](#-best-practices)
+- [🔄 Version History](#-version-history)
+
 ## 🔒 Overview
 
 This project includes a comprehensive PII (Personally Identifiable Information) detection system designed for GDPR compliance. The system automatically scans uploaded documents for sensitive data and provides filtering capabilities to identify non-compliant documents.
