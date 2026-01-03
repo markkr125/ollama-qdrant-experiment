@@ -3,9 +3,9 @@ import { expect, test } from '@playwright/test';
 test.describe('Collection Management E2E', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    // Wait for app to be ready
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(500);
+    // Wait for app shell to be ready (avoid networkidle with Vite dev/HMR)
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(250);
   });
 
   test('create new collection', async ({ page }) => {

@@ -22,9 +22,10 @@ test.describe('Search Flow E2E', () => {
     });
 
     await page.goto('/');
-    // Wait for app to be ready
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1000);
+    // Wait for app shell to be ready (Vite dev keeps an HMR websocket open,
+    // so "networkidle" can hang indefinitely in CI)
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(250);
 
     // Ensure we're in search view (header nav, not the form submit button)
     await page.locator('.nav-buttons button').filter({ hasText: /Search/ }).first().click().catch(() => {});
@@ -33,7 +34,7 @@ test.describe('Search Flow E2E', () => {
 
   test('complete search and bookmark flow', async ({ page }) => {
     // Wait for page to load
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('domcontentloaded');
     await expect(page.locator('h1')).toBeVisible();
 
     // Enter search query

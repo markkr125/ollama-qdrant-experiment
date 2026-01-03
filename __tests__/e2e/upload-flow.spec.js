@@ -24,9 +24,9 @@ test.describe('Upload Flow E2E', () => {
     });
 
     await page.goto('/');
-    // Wait for app to be ready
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(500);
+    // Wait for app shell to be ready (avoid networkidle with Vite dev/HMR)
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(250);
   });
 
   test('upload text file and track progress', async ({ page }) => {
