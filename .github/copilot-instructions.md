@@ -881,6 +881,18 @@ app.post('/api/documents/upload', upload.array('files', 100), async (req, res) =
 
 ## Testing Infrastructure
 
+### CI E2E Notes (Playwright)
+- CI workflow starts a mock Ollama server for E2E to avoid depending on real models/services: `scripts/mock-ollama-server.js`.
+- E2E job sets env vars (see `.github/workflows/test.yml`):
+  - `OLLAMA_URL=http://127.0.0.1:11434/api/embed`
+  - `MODEL=mock-embed`
+  - `PII_DETECTION_ENABLED=false` (keep E2E fast/deterministic)
+  - `QDRANT_URL=http://localhost:6333`
+- Avoid `page.waitForLoadState('networkidle')` in E2E: Vite dev server keeps an HMR websocket open and can hang CI. Prefer `domcontentloaded` + targeted waits.
+- Playwright browser install is cached in CI using `actions/cache` for `~/.cache/ms-playwright` (keyed by OS + `package-lock.json` hash). This makes the “Install Playwright browsers” step much faster on cache hits.
+- Playwright generates artifacts in `playwright-report/` and `test-results/` (and CI uploads them on failure). These directories should be ignored in git.
+- CI retries are controlled in `playwright.config.js` via the `retries` setting. Keep retries low in CI to fail fast when something is genuinely broken.
+
 ### Automated Tests (61 unit tests, all passing)
 **Test Stack:**
 - Backend: Jest 29.7.0 with Supertest 6.3.3
