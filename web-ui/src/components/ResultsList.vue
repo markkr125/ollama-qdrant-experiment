@@ -95,6 +95,41 @@
       </div>
     </div>
 
+    <!-- Filename Filter Section (Browse & Bookmarks) - Outside of header card -->
+    <div v-if="(query || searchType === 'browse' || searchType === 'bookmarks') && (searchType === 'browse' || searchType === 'bookmarks')" class="filter-menu-section">
+      <div class="filter-menu-header">
+        <span class="filter-menu-title">📝 Filename Filter</span>
+      </div>
+      <div class="filter-menu-content">
+        <div class="filename-filter-wrapper">
+          <input
+            v-if="searchType === 'browse'"
+            type="text"
+            v-model="browseFilenameFilter"
+            @input="handleBrowseFilenameChange"
+            placeholder="🔍 Filter by filename..."
+            class="filename-filter-input"
+          />
+          <input
+            v-else-if="searchType === 'bookmarks'"
+            type="text"
+            v-model="bookmarksFilenameFilter"
+            @input="handleBookmarksFilenameChange"
+            placeholder="🔍 Filter by filename..."
+            class="filename-filter-input"
+          />
+          <button
+            v-if="(searchType === 'browse' && browseFilenameFilter) || (searchType === 'bookmarks' && bookmarksFilenameFilter)"
+            @click="searchType === 'browse' ? clearBrowseFilenameFilter() : clearBookmarksFilenameFilter()"
+            class="clear-filter-btn"
+            title="Clear filter"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Cluster Visualization Panel -->
     <div v-if="(query || searchType === 'bookmarks' || searchType === 'browse') && totalResults > 0 && searchType !== 'random' && showClusterView" class="cluster-visualization-section">
       <!-- Cluster View Panel -->
@@ -489,10 +524,15 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['page-change', 'find-similar', 'clear-similar', 'clear-random', 'show-pii-modal', 'refresh-results', 'scan-complete', 'filter-by-ids', 'sort-change', 'limit-change'])
+const emit = defineEmits(['page-change', 'find-similar', 'clear-similar', 'clear-random', 'show-pii-modal', 'refresh-results', 'scan-complete', 'filter-by-ids', 'sort-change', 'limit-change', 'filename-filter-change'])
 
 const expandedIds = ref(new Set())
 const scanning = ref({})
+
+// Filename filter state
+const browseFilenameFilter = ref('')
+const bookmarksFilenameFilter = ref('')
+let filenameFilterTimeout = null
 
 // Bookmarks state (localStorage)
 const bookmarkedIds = ref(new Set())
@@ -550,6 +590,31 @@ const browsePerPage = ref(props.limit)
 
 // Bookmarks controls
 const bookmarksPerPage = ref(props.limit)
+
+// Filename filter methods
+const handleBrowseFilenameChange = () => {
+  clearTimeout(filenameFilterTimeout)
+  filenameFilterTimeout = setTimeout(() => {
+    emit('filename-filter-change', { mode: 'browse', filter: browseFilenameFilter.value })
+  }, 300) // 300ms debounce
+}
+
+const handleBookmarksFilenameChange = () => {
+  clearTimeout(filenameFilterTimeout)
+  filenameFilterTimeout = setTimeout(() => {
+    emit('filename-filter-change', { mode: 'bookmarks', filter: bookmarksFilenameFilter.value })
+  }, 300) // 300ms debounce
+}
+
+const clearBrowseFilenameFilter = () => {
+  browseFilenameFilter.value = ''
+  emit('filename-filter-change', { mode: 'browse', filter: '' })
+}
+
+const clearBookmarksFilenameFilter = () => {
+  bookmarksFilenameFilter.value = ''
+  emit('filename-filter-change', { mode: 'bookmarks', filter: '' })
+}
 
 // Cluster visualization state
 const scatterPlotRef = ref(null)
@@ -1347,6 +1412,28 @@ onMounted(() => {
   flex-wrap: wrap;
 }
 
+.filter-menu-section {
+  padding: 1rem;
+  background: white;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+}
+
+.filter-menu-header {
+  margin-bottom: 0.75rem;
+}
+
+.filter-menu-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.filter-menu-content {
+  display: flex;
+  align-items: center;
+}
+
 .control-label {
   display: flex;
   align-items: center;
@@ -1375,6 +1462,57 @@ onMounted(() => {
   outline: none;
   border-color: var(--primary-color);
   box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+}
+
+.filename-filter-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  max-width: 500px;
+}
+
+.filename-filter-input {
+  padding: 0.5rem 2.5rem 0.5rem 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: white;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  width: 100%;
+  transition: all 0.2s;
+}
+
+.filename-filter-input:hover {
+  border-color: var(--primary-color);
+}
+
+.filename-filter-input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+}
+
+.filename-filter-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.clear-filter-btn {
+  position: absolute;
+  right: 0.5rem;
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+  border-radius: 4px;
+}
+
+.clear-filter-btn:hover {
+  color: var(--text-primary);
+  background: var(--background);
 }
 
 .results-title {

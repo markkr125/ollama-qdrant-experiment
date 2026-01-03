@@ -16,18 +16,19 @@ function createBrowseRoutes({
       const sortBy = req.query.sortBy || 'id';
       const sortOrder = req.query.sortOrder || 'asc';
       const sessionId = req.query.sessionId || null;
+      const filenameFilter = req.query.filename || '';
 
-      console.log(`Browse request: page=${page}, limit=${limit}, sortBy=${sortBy}, sortOrder=${sortOrder}, sessionId=${sessionId}`);
+      console.log(`Browse request: page=${page}, limit=${limit}, sortBy=${sortBy}, sortOrder=${sortOrder}, filename=${filenameFilter}, sessionId=${sessionId}`);
 
-      // Create cache key based on sort parameters
-      const cacheKey = `${sortBy}-${sortOrder}`;
+      // Create cache key based on sort parameters AND filename filter
+      const cacheKey = `${sortBy}-${sortOrder}-${filenameFilter}`;
       let sortedIds = null;
       let newSessionId = sessionId;
 
       // Check if we have a valid cached session
       if (sessionId && browseCache.has(sessionId)) {
         const cached = browseCache.get(sessionId);
-        // Verify cache matches current sort settings AND collection
+        // Verify cache matches current sort settings AND collection AND filename filter
         if (cached.cacheKey === cacheKey &&
             cached.collectionId === req.collectionId &&
             Date.now() - cached.timestamp < cacheTtlMs) {
@@ -59,6 +60,16 @@ function createBrowseRoutes({
         } while (nextOffset !== null && nextOffset !== undefined);
 
         console.log(`Fetched ${allPoints.length} documents for sorting`);
+
+        // Apply filename filter if present (case-insensitive partial match)
+        if (filenameFilter) {
+          const filterLower = filenameFilter.toLowerCase();
+          allPoints = allPoints.filter(point => {
+            const filename = point.payload.filename || point.payload.title || '';
+            return filename.toLowerCase().includes(filterLower);
+          });
+          console.log(`After filename filter: ${allPoints.length} documents`);
+        }
 
         // Sort documents based on sortBy parameter
         if (sortBy === 'filename') {

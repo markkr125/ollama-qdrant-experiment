@@ -382,6 +382,7 @@ const points = await qdrantClient.retrieve(COLLECTION_NAME, {
 
 **Features:**
 - Client-side pagination (20 per page, configurable: 10/20/50/100)
+- **Filename filtering**: Case-insensitive partial match in both Browse and Bookmarks modes
 - Cluster filtering: Click cluster in visualization → filters bookmarks by selected IDs
 - Visualization support: "Visualize Results" button with `bookmarkIds` parameter
 - Sorting: Maintains order from backend retrieval (ID order)
@@ -480,27 +481,37 @@ const handleSurpriseMe = () => {
 // Cache structure (Map-based, in-memory)
 browseCache.set(sessionId, {
   ids: [1, 2, 3, ...],           // Sorted document IDs only (lightweight)
-  cacheKey: 'filename-asc',      // Sort configuration: ${sortBy}-${sortOrder}
+  cacheKey: 'filename-asc-filter',  // Sort + filter configuration: ${sortBy}-${sortOrder}-${filenameFilter}
+  collectionId: 'uuid',          // Collection identifier
   timestamp: Date.now()          // For TTL expiration
 });
 ```
 
 **How it works:**
-1. **First browse request**: Server fetches all documents, sorts them, caches only IDs, returns `sessionId`
+1. **First browse request**: Server fetches all documents, applies filename filter, sorts them, caches only IDs, returns `sessionId`
 2. **Subsequent page requests**: Client sends `sessionId`, server uses cached IDs, retrieves only requested page
-3. **Sort/limit changes**: Client clears `sessionId`, triggers new cache session
+3. **Sort/limit/filter changes**: Client clears `sessionId`, triggers new cache session
 4. **Cache invalidation**: TTL 10 minutes, auto-cleanup every 2 minutes
 
-**Session ID format:** `browse-${timestamp}-${random9chars}`
+**Session ID format:** `browse-${collectionId}-${timestamp}-${random9chars}`
+
+**Filename Filtering:**
+- **Browse mode**: Server-side filtering with query param `?filename=searchterm`
+- **Bookmarks mode**: Client-side filtering (filters `fullBookmarkedResults` before pagination)
+- Case-insensitive partial matching on `filename` field
+- Debounced input (300ms) in UI to reduce server requests
+- Clears session cache when filter changes
 
 **Frontend state:**
 - `browseSessionId.value` - stored in App.vue
-- Sent as query param: `/api/browse?sessionId=...&page=2&limit=20`
-- Cleared on sort/limit change to force fresh cache
+- `browseFilenameFilter.value` - filter text for Browse mode
+- `bookmarksFilenameFilter.value` - filter text for Bookmarks mode
+- Sent as query param: `/api/browse?sessionId=...&page=2&limit=20&filename=test`
+- Cleared on sort/limit/filter change to force fresh cache
 - `browseFilteredByCluster.value` - prevents reload when cluster filter active
 
 **Performance:**
-- Initial load: Fetches all docs once (scroll with batches of 100)
+- Initial load: Fetches all docs once (scroll with batches of 100), applies filename filter
 - Subsequent pages: Retrieves only 20 docs via `qdrant.retrieve(pageIds)`
 - Memory: ~100KB per 10k documents (IDs only, not full payloads)
 
@@ -522,7 +533,7 @@ See `server.js` lines 906-940 for implementation pattern.
 - `POST /api/search/by-document` - Upload file to find similar
 
 **Browse/Stats:**
-- `GET /api/browse` - Paginated all documents with sort
+- `GET /api/browse` - Paginated all documents with sort and optional filename filter (`?filename=searchterm`)
 - `GET /api/bookmarks` - Fetch by document IDs
 - `GET /api/stats` - Collection stats (categories, tags, counts)
 - `GET /api/facets` - Get all unique facet values

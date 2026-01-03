@@ -29,16 +29,97 @@ The main interface features:
 - Real-time results with score indicators
 - Document count and category statistics
 
-### Add Document Modal
+### Browse All Documents
 
-![Add Document](../docs/screenshots/webui-add-document.png)
+![Browse All](../docs/screenshots/webui-browase-all.png)
 
-Upload new documents directly from the browser:
-- **Text Input**: Direct content entry with optional metadata
-- **File Upload**: Support for multiple formats (TXT, JSON, PDF, DOCX, DOC)
+Browse and filter all documents in your collection:
+- Sort by Document ID, Filename, Category, or Date
+- Adjustable results per page (10, 20, 50, 100)
+- Filename filter for quick searching
+- Session-based pagination for performance
+
+### Bookmarks
+
+![Bookmarks](../docs/screenshots/webui-bookmarks.png)
+
+Save and manage your favorite documents:
+- Star any document to bookmark it
+- Client-side pagination
+- Filename filtering
+- Visualization support
+
+### Find Similar Documents
+
+![Find Similar](../docs/screenshots/webui-findsimilar.png)
+
+Discover related content:
+- Click "Find Similar" on any document
+- Semantic similarity search
+- Ranked results with similarity scores
+- Exclude source document from results
+
+### Document Visualization
+
+![Visualization](../docs/screenshots/webui-visualization.png)
+
+Interactive 2D visualization of document clusters:
+- UMAP dimensionality reduction (768D → 2D)
+- Color coding by category, PII risk, or upload date
+- Box/lasso selection for filtering
+- Configurable max documents (100-5000)
+- Cached for performance
+
+### Add Document - Text Input
+
+![Add Document Text](../docs/screenshots/webui-add-document-plan-text.png)
+
+Direct text entry with optional metadata:
+- Filename and content fields
+- Optional metadata (category, location, tags, price, rating)
 - Real-time word/character count
 - Instant embedding and indexing
-- Automatic metadata extraction from file content
+
+### Add Document - File Upload
+
+![Add Document Upload](../docs/screenshots/webui-add-document.png)
+
+Multi-file upload with automatic processing:
+- Support for TXT, JSON, PDF, DOCX, DOC formats
+- Drag & drop interface
+- Automatic metadata extraction
+- Optional auto-categorization
+
+### Upload Progress Tracking
+
+![Upload Progress](../docs/screenshots/webui-add-document-upload-progress.png)
+
+Real-time upload monitoring:
+- File-by-file progress tracking
+- Animated progress bar with status icons
+- Stop capability (finishes current file)
+- Error handling with detailed messages
+
+### Search by Uploaded File
+
+![Search by File](../docs/screenshots/webui-search-by-uploaded-file.png)
+
+Find similar documents by uploading a file:
+- Upload any supported document format
+- Automatic embedding generation
+- Returns semantically similar results
+- No permanent storage of uploaded file
+
+### PII Detection & Reporting
+
+![PII Report](../docs/screenshots/webui-sensitive-data-report.png)
+
+Comprehensive privacy compliance:
+- 5 detection methods (Regex, Ollama, Hybrid, Compromise, Advanced)
+- 11 PII types detected (email, phone, SSN, credit card, etc.)
+- Risk level classification (None, Low, Medium, High, Critical)
+- Detailed findings with masked values
+- Bulk scanning capabilities
 
 ## Features
 

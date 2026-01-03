@@ -83,6 +83,7 @@
             @refresh-results="loadBrowseResults"
             @scan-complete="handleScanComplete"
             @filter-by-ids="handleFilterByIds"
+            @filename-filter-change="handleFilenameFilterChange"
           />
         </div>
 
@@ -106,6 +107,7 @@
             @filter-by-ids="handleFilterByIds"
             @page-change="handleBookmarksPageChange"
             @limit-change="handleBookmarksLimitChange"
+            @filename-filter-change="handleFilenameFilterChange"
           />
         </div>
 
@@ -643,6 +645,7 @@ const browseSortBy = ref('id')
 const browseSortOrder = ref('asc')
 const browseFilteredByCluster = ref(false)
 const browseSessionId = ref(null) // Session ID for server-side cache
+const browseFilenameFilter = ref('') // Filename filter
 
 // Bookmarks state
 const bookmarkedResults = ref([])
@@ -651,6 +654,7 @@ const bookmarksLoading = ref(false)
 const bookmarksPage = ref(1)
 const bookmarksLimit = ref(20)
 const bookmarksTotal = ref(0)
+const bookmarksFilenameFilter = ref('') // Filename filter
 
 // Computed property for upload state
 const hasActiveUpload = computed(() => !!activeJobId.value)
@@ -1091,6 +1095,11 @@ const loadBrowseResults = async () => {
       sortOrder: browseSortOrder.value
     }
     
+    // Add filename filter if present
+    if (browseFilenameFilter.value) {
+      params.filename = browseFilenameFilter.value
+    }
+    
     // Include session ID if we have one
     if (browseSessionId.value) {
       params.sessionId = browseSessionId.value
@@ -1137,7 +1146,16 @@ const loadBookmarkedDocuments = async () => {
       }
     })
     
-    const allResults = response.data.results || []
+    let allResults = response.data.results || []
+    
+    // Apply filename filter if present (client-side)
+    if (bookmarksFilenameFilter.value) {
+      const filterLower = bookmarksFilenameFilter.value.toLowerCase()
+      allResults = allResults.filter(result => 
+        result.payload.filename?.toLowerCase().includes(filterLower)
+      )
+    }
+    
     fullBookmarkedResults.value = allResults // Store full list
     bookmarksTotal.value = allResults.length
     
@@ -1195,6 +1213,20 @@ const handleBrowseLimitChange = (newLimit) => {
   browsePage.value = 1 // Reset to first page
   browseSessionId.value = null // Clear session to trigger fresh cache
   loadBrowseResults()
+}
+
+// Handle filename filter change
+const handleFilenameFilterChange = ({ mode, filter }) => {
+  if (mode === 'browse') {
+    browseFilenameFilter.value = filter
+    browsePage.value = 1 // Reset to first page
+    browseSessionId.value = null // Clear session to trigger fresh cache
+    loadBrowseResults()
+  } else if (mode === 'bookmarks') {
+    bookmarksFilenameFilter.value = filter
+    bookmarksPage.value = 1 // Reset to first page
+    loadBookmarkedDocuments()
+  }
 }
 
 // Restore random results from URL using seed
