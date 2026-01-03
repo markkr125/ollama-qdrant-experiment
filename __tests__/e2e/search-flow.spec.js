@@ -1,6 +1,44 @@
 import { expect, test } from '@playwright/test';
+import path from 'path';
 
 test.describe('Search Flow E2E', () => {
+  test.beforeAll(async ({ browser }) => {
+    // CI starts with a fresh Qdrant container (no documents), so seed a couple
+    // of docs via the real UI upload flow to make the search tests deterministic.
+    const page = await browser.newPage();
+    await page.goto('/');
+    await page.waitForLoadState('domcontentloaded');
+
+    const uploadBtn = page.locator('button').filter({ hasText: 'Add Document' }).first();
+    await expect(uploadBtn).toBeVisible({ timeout: 15000 });
+    await uploadBtn.click();
+
+    await expect(page.locator('.upload-modal-overlay')).toBeVisible({ timeout: 10000 });
+
+    const fileInput = page.locator('input[type="file"]');
+    await fileInput.setInputFiles([
+      path.join(__dirname, '../fixtures/documents/test_hotel.txt'),
+      path.join(__dirname, '../fixtures/documents/test_essay.txt')
+    ]);
+
+    const submitBtn = page.locator('button[type="submit"]').first();
+    await expect(submitBtn).toBeEnabled({ timeout: 5000 });
+    await submitBtn.click();
+
+    // Progress modal should appear and complete.
+    await expect(page.locator('.modal-overlay')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('.modal-overlay')).toContainText(/success|completed/i, {
+      timeout: 60000
+    });
+
+    const closeBtn = page.locator('.modal-overlay button').filter({ hasText: 'Close' }).first();
+    if (await closeBtn.isVisible()) {
+      await closeBtn.click();
+    }
+
+    await page.close();
+  });
+
   test.beforeEach(async ({ page, request }) => {
     // Ensure prior runs don't leave the app in "Uploading..." state.
     try {
@@ -22,9 +60,10 @@ test.describe('Search Flow E2E', () => {
     });
 
     await page.goto('/');
-    // Wait for app to be ready
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1000);
+    // Wait for app shell to be ready (Vite dev keeps an HMR websocket open,
+    // so "networkidle" can hang indefinitely in CI)
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForTimeout(250);
 
     // Ensure we're in search view (header nav, not the form submit button)
     await page.locator('.nav-buttons button').filter({ hasText: /Search/ }).first().click().catch(() => {});
@@ -33,13 +72,14 @@ test.describe('Search Flow E2E', () => {
 
   test('complete search and bookmark flow', async ({ page }) => {
     // Wait for page to load
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('domcontentloaded');
     await expect(page.locator('h1')).toBeVisible();
 
     // Enter search query
     const searchInput = page.locator('textarea.textarea[placeholder*="search" i]').first();
     await expect(searchInput).toBeVisible({ timeout: 5000 });
-    await searchInput.fill('luxury hotel Paris');
+    // Match seeded fixture content (Category: hotel, Location: Paris)
+    await searchInput.fill('hotel Paris');
 
     // Select search type
     const searchTypeSelect = page.locator('.search-form select').first();
@@ -136,18 +176,25 @@ test.describe('Search Flow E2E', () => {
 
     // Navigate to page 2
     const nextButton = page.locator('[data-testid="next-page"], button:has-text("Next")').first();
-    if (await nextButton.isVisible()) {
-      await nextButton.click();
+    if (!(await nextButton.isVisible())) return;
 
-      // Wait for new results
-      await page.waitForTimeout(1000);
-
-      // Should still have results
-      await expect(page.locator('.result-card').first()).toBeVisible();
-
-      // URL should reflect page 2
-      expect(page.url()).toContain('page=2');
+    // In CI we may have <= 1 page of results (Next is disabled). That's a valid
+    // state; only click when pagination is actually possible.
+    if (!(await nextButton.isEnabled())) {
+      await expect(nextButton).toBeDisabled();
+      return;
     }
+
+    await nextButton.click();
+
+    // Wait for new results
+    await page.waitForTimeout(1000);
+
+    // Should still have results
+    await expect(page.locator('.result-card').first()).toBeVisible();
+
+    // URL should reflect page 2
+    expect(page.url()).toContain('page=2');
   });
 
   test('find similar documents', async ({ page }) => {

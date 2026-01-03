@@ -1,0 +1,130 @@
+#!/usr/bin/env node
+
+const http = require('http');
+const { URL } = require('url');
+
+const PORT = parseInt(process.env.MOCK_OLLAMA_PORT || '11434', 10);
+const HOST = process.env.MOCK_OLLAMA_HOST || '127.0.0.1';
+
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', chunk => {
+      data += chunk;
+      // Hard cap: this is a test server
+      if (data.length > 5_000_000) {
+        reject(new Error('Request body too large'));
+        req.destroy();
+      }
+    });
+    req.on('end', () => {
+      if (!data) return resolve({});
+      try {
+        resolve(JSON.parse(data));
+      } catch (e) {
+        reject(e);
+      }
+    });
+  });
+}
+
+function fnv1a32(str) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    // 32-bit FNV prime
+    hash = (hash * 0x01000193) >>> 0;
+  }
+  return hash >>> 0;
+}
+
+function makePrng(seed) {
+  // LCG (Numerical Recipes). Deterministic across Node versions.
+  let state = seed >>> 0;
+  return () => {
+    state = (Math.imul(1664525, state) + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+}
+
+function makeEmbeddingForInput(input) {
+  const text = Array.isArray(input) ? input.join('\n') : String(input ?? '');
+  const seed = fnv1a32(text);
+  const rand = makePrng(seed);
+
+  const vec = new Array(768);
+  for (let i = 0; i < vec.length; i++) {
+    // Uniform [-1, 1)
+    vec[i] = (rand() * 2) - 1;
+  }
+  return vec;
+}
+
+function writeJson(res, status, payload) {
+  const body = JSON.stringify(payload);
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(body)
+  });
+  res.end(body);
+}
+
+function writeNdjsonStream(res, messageContent) {
+  res.writeHead(200, {
+    'Content-Type': 'application/x-ndjson',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Transfer-Encoding': 'chunked'
+  });
+
+  const chunks = [
+    { message: { content: messageContent.slice(0, Math.ceil(messageContent.length / 2)) } },
+    { message: { content: messageContent.slice(Math.ceil(messageContent.length / 2)) } },
+    { done: true }
+  ];
+
+  for (const obj of chunks) {
+    res.write(JSON.stringify(obj) + '\n');
+  }
+  res.end();
+}
+
+const server = http.createServer(async (req, res) => {
+  try {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+
+    if (req.method === 'GET' && url.pathname === '/health') {
+      return writeJson(res, 200, { status: 'ok' });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/embed') {
+      const body = await readJsonBody(req);
+      const embedding = makeEmbeddingForInput(body.input);
+      return writeJson(res, 200, { embeddings: [embedding] });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/show') {
+      // server.js expects response.data.parameters containing 'num_ctx <n>'
+      return writeJson(res, 200, {
+        name: 'mock-model',
+        parameters: 'num_ctx 2048'
+      });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/chat') {
+      // PII detector expects streamed NDJSON with message.content accumulating into a JSON array.
+      // Keep it minimal and valid.
+      const messageContent = '[]';
+      return writeNdjsonStream(res, messageContent);
+    }
+
+    writeJson(res, 404, { error: 'Not found' });
+  } catch (err) {
+    writeJson(res, 500, { error: err.message });
+  }
+});
+
+server.listen(PORT, HOST, () => {
+  // eslint-disable-next-line no-console
+  console.log(`[mock-ollama] listening on http://${HOST}:${PORT}`);
+});

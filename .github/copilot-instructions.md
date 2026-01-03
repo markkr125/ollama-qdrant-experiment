@@ -973,6 +973,13 @@ CATEGORIZATION_MODEL=        # e.g., llama3.2:latest for LLM-based metadata extr
 - Production: `hybrid` (accurate + validated)
 - Maximum Coverage: `advanced` (all methods combined)
 
+### CI E2E: Mock Ollama (Fast)
+E2E tests should not depend on downloading Ollama models or running real inference in CI.
+
+- Mock server: `scripts/mock-ollama-server.js` implements `POST /api/embed`, `POST /api/show`, and streamed `POST /api/chat`.
+- Workflow: `.github/workflows/test.yml` starts the mock server in the `e2e-tests` job and sets `OLLAMA_URL=http://127.0.0.1:11434/api/embed` + `MODEL=mock-embed`.
+- Default CI setting: `PII_DETECTION_ENABLED=false` for E2E to keep runs deterministic and fast.
+
 ## When Modifying Code
 
 ### Adding new search filters

@@ -1,0 +1,9 @@
+{"message":{"content":"[\n"}}
+{"message":{"content":"  {\"type\": \"name\", \"value\": \"John Smith\", \"confidence\": 0.9, \"location\": \"Line 1\"},\n"}}
+{"message":{"content":"  {\"type\": \"email\", \"value\": \"test@example.com\", \"confidence\": 1.0, \"location\": \"Line 2\"},\n"}}
+{"message":{"content":"  {\"type\": \"phone\", \"value\": \"+14155552671\", \"confidence\": 0.9, \"location\": \"Line 3\"},\n"}}
+{"message":{"content":"  {\"type\": \"address\", \"value\": \"123 Main Street\", \"confidence\": 0.8, \"location\": \"Line 4\"},\n"}}
+{"message":{"content":"  {\"type\": \"credit_card\", \"value\": \"4111-1111-1111-1111\", \"confidence\": 0.95, \"location\": \"Line 5\"},\n"}}
+{"message":{"content":"  {\"type\": \"credit_card_last4\", \"value\": \"1111\", \"confidence\": 0.9, \"location\": \"Line 6\"}\n"}}
+{"message":{"content":"]"}}
+{"done":true}
