@@ -98,18 +98,36 @@ To stop Qdrant:
 docker-compose -f qdrant-docker-compose.yml down
 ```
 
-### 2. Install Ollama and Embedding Model
+### 2. Install Ollama and Models
 
+Ollama provides the AI models for this project. You'll need:
+
+**Required: Embedding Model** (for vector search)
 ```bash
 # Install Ollama (see https://ollama.ai)
 curl -fsSL https://ollama.ai/install.sh | sh
 
-# Pull an embedding model
+# Pull an embedding model (REQUIRED)
+# For general use and small-medium documents:
 ollama pull embeddinggemma:latest
-# or: ollama pull nomic-embed-text
-# or: ollama pull mxbai-embed-large
-# or: ollama pull bge-large
+
+# For large documents (>2K tokens) or multilingual content:
+ollama pull qwen3-embedding:0.6b
+
+# Other options:
+# ollama pull nomic-embed-text      # 768 dimensions, lightweight
+# ollama pull mxbai-embed-large     # 1024 dimensions, high accuracy
 ```
+
+**Optional: Chat Model** (for PII detection and auto-categorization)
+```bash
+# If you want PII detection or auto-categorization features:
+ollama pull gemma3:4b              # Recommended (best results for both)
+# or: ollama pull llama3.2:latest  # Good alternative
+# or: ollama pull gemma2:2b         # Lightweight option
+```
+
+> **Note:** Chat models are only needed if you enable `PII_DETECTION_ENABLED=true` or set a `CATEGORIZATION_MODEL` in your `.env` file.
 
 ### 3. Setup Project
 
@@ -366,27 +384,117 @@ Coordinates: 48.8566, 2.3522
 
 ### Environment Variables
 
-`.env` file configuration:
+Copy `.env.example` to `.env` and configure:
 
-```env
-# Ollama API
-OLLAMA_URL=http://localhost:11434/api/embed
-AUTH_TOKEN=                    # Optional authentication
-MODEL=nomic-embed-text         # Embedding model name
-
-# Qdrant
-QDRANT_URL=http://192.168.50.87:6333
-COLLECTION_NAME=documents
+```bash
+cp .env.example .env
 ```
+
+#### Required Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OLLAMA_URL` | `http://localhost:11434/api/embed` | Ollama API endpoint for embeddings |
+| `MODEL` | `embeddinggemma:latest` | Embedding model name (must be pulled first) |
+| `QDRANT_URL` | `http://localhost:6333` | Qdrant vector database URL |
+| `COLLECTION_NAME` | `documents` | Name of the Qdrant collection to use |
+
+#### Web Server (Optional)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SERVER_PORT` | `3001` | Port for the Express API server |
+| `MAX_FILE_SIZE_MB` | `10` | Maximum upload file size in megabytes |
+
+#### PII Detection (Optional)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PII_DETECTION_ENABLED` | `false` | Enable automatic PII scanning on uploads |
+| `PII_DETECTION_METHOD` | `hybrid` | Detection method: `ollama`, `regex`, `hybrid`, `compromise`, `advanced` |
+| `PII_DETECTION_MODEL` | _(uses MODEL)_ | Chat model for LLM-based PII detection (recommended: `gemma3:4b`) |
+
+> **💡 PII Detection:** Set to `true` to automatically scan uploaded documents for sensitive information (SSN, credit cards, emails, etc.). Requires a chat model. See [PII Detection Guide](docs/PII_DETECTION.md) for details.
+
+#### Auto-Categorization (Optional)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CATEGORIZATION_MODEL` | _(disabled)_ | Chat model for automatic metadata extraction (recommended: `gemma3:4b`) |
+
+> **💡 Auto-Categorization:** Set a model to automatically extract category, location, tags, and other metadata from uploaded documents using LLM.
+
+#### Visualization Cache (Advanced)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VIZ_CACHE_STRATEGY` | `memory` | Cache strategy: `memory` (in-RAM) or `redis` (external) |
+| `VIZ_CACHE_TTL` | `3600000` | Cache time-to-live in milliseconds (1 hour) |
+| `REDIS_URL` | `redis://localhost:6379` | Redis URL (only needed if strategy is `redis`) |
+
+#### Authentication (Optional)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AUTH_TOKEN` | _(none)_ | Optional authentication token for Ollama API |
 
 ### Supported Embedding Models
 
-- `nomic-embed-text` - 768 dimensions (recommended)
-- `mxbai-embed-large` - 1024 dimensions
-- `bge-large` - 1024 dimensions
-- `snowflake-arctic-embed` - 1024 dimensions
+| Model | Model Size | Context Window | Dimensions | Parameters | Best For |
+|-------|-----------|----------------|------------|------------|----------|
+| `qwen3-embedding:0.6b` | 639MB | **32K tokens** | 768-4096 (flexible) | 596M | **Large documents, long-form content, code** |
+| `embeddinggemma:latest` | 622MB | 2K tokens | 768 | 308M | General purpose, 100+ languages |
+| `nomic-embed-text` | 274MB | 2K tokens | 768 | 137M | Lightweight, general purpose |
+| `mxbai-embed-large` | 670MB | 512 tokens | 1024 | 335M | High accuracy, short documents |
 
-**Note**: Update the vector size in `index.js` (line ~137) if using models with different dimensions.
+#### Choosing the Right Model
+
+**Context Window Limits:**
+- Documents exceeding a model's context window will be rejected with an error
+- Most documents are <2K tokens (~8,000 characters)
+- For large documents (PDFs, research papers, long articles), use `qwen3-embedding:0.6b`
+
+**Recommendations:**
+- **Default**: `embeddinggemma:latest` - Good balance of speed, quality, and size
+- **Large Documents**: `qwen3-embedding:0.6b` - 16x larger context window (32K vs 2K tokens)
+- **Lightweight**: `nomic-embed-text` - Smallest model size, good performance
+- **Accuracy**: `mxbai-embed-large` - Best quality for short texts, but limited context
+
+**Dimension Compatibility:**
+- If using a model with dimensions other than 768, you must update the collection schema
+- See the Troubleshooting section for "Wrong vector dimensions"
+
+> **💡 Tip:** The application automatically detects your model's context limit on startup and validates document sizes before embedding.
+
+### Optional Features Setup
+
+#### Enable PII Detection
+
+To scan documents for personally identifiable information:
+
+1. Pull a chat model: `ollama pull gemma3:4b`
+2. Update `.env`:
+   ```env
+   PII_DETECTION_ENABLED=true
+   PII_DETECTION_METHOD=advanced
+   PII_DETECTION_MODEL=gemma3:4b
+   ```
+3. Restart the server: `npm run server`
+
+See [PII Detection Documentation](docs/PII_DETECTION.md) for detailed configuration.
+
+#### Enable Auto-Categorization
+
+To automatically extract metadata from uploads:
+
+1. Pull a chat model: `ollama pull gemma3:4b`
+2. Update `.env`:
+   ```env
+   CATEGORIZATION_MODEL=gemma3:4b
+   ```
+3. Restart the server
+
+The system will now extract categories, locations, tags, prices, and dates from uploaded documents.
 
 ## 🏗️ Architecture
 
