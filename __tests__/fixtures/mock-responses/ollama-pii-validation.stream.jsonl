@@ -1,0 +1,9 @@
+{"message":{"content":"[\n"}}
+{"message":{"content":"  {\"index\": 0, \"valid\": true, \"adjusted_confidence\": 0.9, \"reason\": \"Clear full name\"},\n"}}
+{"message":{"content":"  {\"index\": 1, \"valid\": true, \"adjusted_confidence\": 1.0, \"reason\": \"Valid email\"},\n"}}
+{"message":{"content":"  {\"index\": 2, \"valid\": false, \"adjusted_confidence\": 0.7, \"reason\": \"Looks like a placeholder/test number\"},\n"}}
+{"message":{"content":"  {\"index\": 3, \"valid\": true, \"adjusted_confidence\": 0.8, \"reason\": \"Plausible address line\"},\n"}}
+{"message":{"content":"  {\"index\": 4, \"valid\": true, \"adjusted_confidence\": 0.95, \"reason\": \"Valid test card format\"},\n"}}
+{"message":{"content":"  {\"index\": 5, \"valid\": true, \"adjusted_confidence\": 0.9, \"reason\": \"Explicit last-4 digits\"}\n"}}
+{"message":{"content":"]"}}
+{"done":true}
