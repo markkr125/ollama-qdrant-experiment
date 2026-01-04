@@ -1,4 +1,8 @@
-# Vector Retriever
+# 🐾 Vector Retriever
+
+<div align="center">
+  <img src="docs/images/puppy-transparent.png" alt="Vector Retriever Logo" width="150"/>
+</div>
 
 General purpose vector database application showcasing **Qdrant's powerful features** with Ollama embeddings. This project demonstrates hybrid search, complex payload filtering, geo-queries, PII detection, and interactive document visualization.
 

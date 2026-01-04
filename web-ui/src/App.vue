@@ -4,8 +4,8 @@
       <div class="container">
         <div class="header-content">
           <h1 class="title" @click="switchView('search')" style="cursor: pointer;">
-            <span class="icon">🔍</span>
-            Vector Retriever Search
+            <img src="./images/puppy-head.png" alt="" class="icon" style="width: 1.2em; height: 1.2em; vertical-align: middle;" />
+            Vector Retriever
           </h1>
           <div class="header-center">
             <CollectionSelector 
