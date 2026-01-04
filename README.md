@@ -1,4 +1,4 @@
-<h1><img src="web-ui/src/favicon/apple-touch-icon.png" alt="" style="width: 1.2em; height: 1.2em; vertical-align: middle;" /> Vector Retriever</h1>
+# 🔍 Vector Retriever
 
 <div align="left">
   <img src="docs/images/puppy-transparent.png" alt="Vector Retriever Logo" width="120"/>
