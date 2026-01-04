@@ -791,6 +791,29 @@ vector-retriever/
 
 5. **Production deployment**: Docker Compose setup with monitoring
 
+6. **Vision model support**: Process images and visual content
+   - Add multimodal embedding models (e.g., `llava`, `bakllava`) for image understanding
+   - Extract text from images (OCR) and generate visual embeddings
+   - Enable search across both text and image content
+   - Support formats: `.jpg`, `.png`, `.gif`, `.webp`, `.bmp`
+
+7. **Document analysis preview**: "Analyze Document" screen
+   - Preview document content without adding it to the collection
+   - Show key information: summary, entities, topics, language detection
+   - Display metadata extraction preview (categories, tags, dates, pii)
+   - Quick decision tool: "Should I add this document?"
+
+8. **Cloud import integration**: Import from public S3/Google Drive folders
+   - **AWS S3**: Direct bucket/folder import with public URLs (no authentication required)
+   - **Google Drive**: Public folder import with shared links
+   - **Pre-import analysis**: Display folder stats (file count, total size, file types breakdown)
+   - **Flexible import options**:
+     - Import all files from folder
+     - Import first X files (for testing/sampling)
+     - Search and select specific files with preview UI
+     - Filter by file type, size, or date range
+   - **Batch processing**: Background import with progress tracking and error handling
+
 ## 📄 License
 
 MIT
