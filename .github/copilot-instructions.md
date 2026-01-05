@@ -270,6 +270,11 @@ If `CATEGORIZATION_MODEL` set (e.g., `llama3.2:latest`), server sends document t
 - `CompromisePIIDetector` - NLP library for names/dates
 - `AdvancedPIIDetector` - All methods combined with deduplication
 
+**PII Type Filter Semantics (Multi-select):**
+- UI multi-select for PII types is treated as **AND** across selected types (a document must contain *all* selected PII types).
+- Implement this by emitting multiple filter clauses (one per type) in `filter.must` rather than a single `match.any` clause.
+- Legacy flat filters (`filters.pii_types`) are also interpreted as AND in `routes/search.js`.
+
 **Documented PII Types (filtered in UI and backend):**
 - `credit_card` - Full credit card numbers (Luhn validated)
 - `credit_card_last4` - Last 4 digits of credit cards (low risk)
@@ -420,6 +425,8 @@ if (searchParams.filter && searchParams.filter.must && searchParams.filter.must.
   totalEstimate = await countFilteredDocuments(qdrantClient, req.qdrantCollection, null);
 }
 ```
+
+**Important:** `countFilteredDocuments()` must use **exact** counts in Qdrant (`exact: true`). Approximate counts can cause confusing UI totals like "5 results out of 132" when filters (notably PII) are applied.
 
 **Why this approach:**
 - ✅ Accurate counts for filtered results (e.g., "115 hotels")
@@ -1134,6 +1141,10 @@ SUPPORTED_IMAGE_TYPES=.jpg,.jpeg,.png,.gif,.webp,.bmp
 
 # Description generation (optional)
 DESCRIPTION_MODEL=
+
+# Auto-generate overview/language at upload (non-images)
+# Defaults to enabled; set to false to speed up uploads.
+AUTO_GENERATE_DESCRIPTION=true
 
 # PII Detection
 PII_DETECTION_ENABLED=true

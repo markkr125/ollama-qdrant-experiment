@@ -307,9 +307,13 @@ function createSearchRoutes({
           }
 
           if (filters.pii_types && filters.pii_types.length > 0) {
-            qdrantFilter.must.push({
-              key: 'pii_types',
-              match: { any: filters.pii_types }
+            // For multiple PII types: use AND logic (document must contain ALL selected types)
+            // Add separate must clause for each type
+            filters.pii_types.forEach(piiType => {
+              qdrantFilter.must.push({
+                key: 'pii_types',
+                match: { value: piiType }
+              });
             });
           }
 

@@ -1823,7 +1823,7 @@ const performFacetSearch = async (filters) => {
     searchType.value = 'facet'
     const searchParams = {
       searchType: 'semantic',
-      query: '',
+      query: ' ',  // Single space instead of empty - allows semantic endpoint to handle filter-only search
       limit: searchFormRef.value?.limit || 10,
       page: 1,
       filters

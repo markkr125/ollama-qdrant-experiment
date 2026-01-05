@@ -25,7 +25,7 @@ export default defineConfig({
   webServer: {
     command: 'bash scripts/start-e2e-webui.sh',
     url: 'http://localhost:5173',
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     timeout: 90000,
     stdout: 'pipe',
     stderr: 'pipe'
