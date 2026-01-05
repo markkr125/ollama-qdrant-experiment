@@ -3,6 +3,8 @@
  * Extracts language, description, and content from images in a single API call
  */
 
+const sharp = require('sharp');
+
 function createVisionService({ axios, ollamaUrl, authToken, visionModel }) {
   /**
    * Process image with vision model
@@ -19,8 +21,15 @@ function createVisionService({ axios, ollamaUrl, authToken, visionModel }) {
     const startTime = Date.now();
 
     try {
+      // Re-encode image using sharp to fix any format issues (like JPEG subsampling)
+      // Convert to PNG which is universally supported
+      console.log('Re-encoding image to ensure compatibility...');
+      const normalizedBuffer = await sharp(imageBuffer)
+        .png() // Convert to PNG (universally supported, no subsampling issues)
+        .toBuffer();
+      
       // Convert buffer to base64
-      const base64Image = imageBuffer.toString('base64');
+      const base64Image = normalizedBuffer.toString('base64');
 
       const headers = {
         'Content-Type': 'application/json'
@@ -99,6 +108,13 @@ Be thorough and precise. Capture every detail from the image.`;
         throw new Error('Vision processing timed out. Image may be too large or complex.');
       } else if (error.response?.status === 400) {
         console.error('❌ Ollama rejected the vision request:', error.response.data);
+        const errorDetail = error.response.data?.detail || error.response.data?.error || '';
+        
+        // Check for JPEG subsampling error
+        if (errorDetail.includes('subsampling') || errorDetail.includes('unsupported JPEG feature')) {
+          throw new Error('This JPEG format is not supported. Please convert the image to PNG or use a different JPEG encoder (try saving as PNG in your image editor).');
+        }
+        
         throw new Error('Invalid vision request. Model may not support vision or image format is unsupported.');
       } else if (error.response?.status === 404) {
         console.error('❌ Vision model not found:', visionModel);

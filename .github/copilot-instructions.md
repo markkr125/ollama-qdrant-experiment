@@ -239,6 +239,19 @@ Qdrant performs automatic score fusion when both dense and sparse vectors provid
 /^Coordinates:\s*(-?\d+\.\d+),\s*(-?\d+\.\d+)/im  // → {lat, lon}
 ```
 
+**Unstructured Category in Facets:**
+Documents with `is_unstructured: true` are automatically grouped into an "unstructured" category in the facets API (`routes/browse.js`):
+```javascript
+// Count categories (including "unstructured" for is_unstructured docs)
+if (point.payload.category) {
+  categoryCount[point.payload.category] = (categoryCount[point.payload.category] || 0) + 1;
+} else if (point.payload.is_unstructured === true) {
+  // Documents without category but marked as unstructured get "unstructured" category
+  categoryCount['unstructured'] = (categoryCount['unstructured'] || 0) + 1;
+}
+```
+This allows users to browse and filter by "unstructured" category in the UI.
+
 **Optional Auto-Categorization:**
 If `CATEGORIZATION_MODEL` set (e.g., `llama3.2:latest`), server sends document to Ollama Chat API for JSON extraction. System prompt requests: category, city, coordinates, tags, price, date. Result merged into metadata.
 
@@ -250,6 +263,38 @@ If `CATEGORIZATION_MODEL` set (e.g., `llama3.2:latest`), server sends document t
 - `CompromisePIIDetector` - NLP library for names/dates
 - `AdvancedPIIDetector` - All methods combined with deduplication
 
+**Documented PII Types (filtered in UI and backend):**
+- `credit_card` - Full credit card numbers (Luhn validated)
+- `credit_card_last4` - Last 4 digits of credit cards (low risk)
+- `email` - Email addresses
+- `phone` - Phone numbers (validated with phone library)
+- `address` - Physical addresses
+- `name` - Personal names
+- `bank_account` - Bank account numbers (IBAN)
+- `ssn` - Social Security Numbers
+- `passport` - Passport numbers
+- `driver_license` - Driver's license numbers
+- `date_of_birth` - Birth dates
+- `ip_address` - IP addresses
+- `medical` - Medical information (critical risk)
+
+**Backend filtering (`routes/browse.js`):**
+The `/api/facets` endpoint filters PII types to only return documented types:
+```javascript
+const documentedPIITypes = [
+  'credit_card', 'credit_card_last4', 'email', 'phone', 'address',
+  'name', 'bank_account', 'ssn', 'passport', 'driver_license',
+  'date_of_birth', 'ip_address', 'medical'
+];
+const piiTypes = Object.entries(piiTypeCount)
+  .filter(([name]) => documentedPIITypes.includes(name))
+  .map(([name, count]) => ({ name, count }))
+  .sort((a, b) => b.count - a.count);
+```
+
+**Frontend PII type formatting:**
+All three components (FacetBar, FacetsSidebar, PIIDetailsModal) use consistent icon/label mappings for documented types only.
+
 **Dual-Agent Validation (Hybrid):**
 1. **Detection Agent**: Ollama scans document for PII → returns findings
 2. **Validation Agent**: Second Ollama call validates each finding → filters false positives (company names, order IDs, product codes)
@@ -257,7 +302,7 @@ If `CATEGORIZATION_MODEL` set (e.g., `llama3.2:latest`), server sends document t
 
 **Anti-Loop Protection**: Tracks occurrence count per finding, stops if same item appears >3 times (critical for non-English text).
 
-**JSON Parsing with Hebrew Support:
+**JSON Parsing with Hebrew Support:**
 Line-by-line processing to handle embedded quotes (e.g., תנ"ך):
 ```javascript
 // Escape quotes within Hebrew text before JSON parsing
@@ -349,10 +394,31 @@ Combines timestamp + auto-incrementing counter for uniqueness.
 - Emits `page-change` event → `App.vue` updates URL + re-searches
 - Per-page selector: 10, 20, 50, 100 (triggers session refresh)
 
-**Backend** (`server.js`):
+**Backend** (`routes/search.js`):
 - **Browse mode**: Session cache with `qdrant.retrieve()` for page IDs (see Browse Session Cache Pattern)
 - **Bookmarks**: Client-side pagination with array slicing (all bookmarks loaded once)
-- **Search results**: Standard offset/limit on search queries
+- **Hybrid/Semantic search**: Uses `countFilteredDocuments()` for total count
+
+**Vector Search Pagination Logic:**
+For hybrid/semantic searches, pagination total is based on **filters only** (query affects ranking, not count):
+```javascript
+// Hybrid search - query determines ranking, filter determines count
+if (searchParams.filter && searchParams.filter.must && searchParams.filter.must.length > 0) {
+  // Has filters (category, location, PII types, etc.)
+  // Count by filter - shows "10 out of 115 hotels"
+  totalEstimate = await countFilteredDocuments(qdrantClient, req.qdrantCollection, searchParams.filter);
+} else {
+  // No filters - count entire collection
+  // Shows "10 out of 226 documents"
+  totalEstimate = await countFilteredDocuments(qdrantClient, req.qdrantCollection, null);
+}
+```
+
+**Why this approach:**
+- ✅ Accurate counts for filtered results (e.g., "115 hotels")
+- ✅ Allows pagination through all filtered documents
+- ✅ Query ("order") affects ranking/relevance, not total count
+- ⚠️ Can't efficiently count "documents matching query + filter" without searching all
 
 **Bookmarks Pagination:**
 - Fetches all bookmarked documents once via `qdrant.retrieve(allBookmarkIds)`
@@ -914,6 +980,14 @@ Supports: `.txt`, `.pdf`, `.docx`, `.html`, `.md`
 Supports (when enabled): `.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`, `.bmp`
 
 **Enablement:** Image upload/processing is feature-flagged via env vars. The backend exposes `visionEnabled` + `supportedImageTypes` via `GET /api/config`, and the UI adjusts the upload `accept` attribute accordingly.
+
+**Image Format Compatibility:**
+Uses `sharp` library for automatic format conversion to ensure compatibility:
+- **JPEG subsampling issues**: Some JPEG images with specific chroma subsampling ratios cause Ollama vision model failures
+- **Solution**: All images automatically re-encoded to PNG before processing
+- **Implementation**: `services/vision-service.js` uses `sharp.toFormat('png')` before base64 encoding
+- **Dependency**: `sharp` v3.x (npm install sharp) - native image processing library
+- **Performance**: Minimal overhead (~100-200ms for typical images), eliminates format-related errors
 
 **Processing flow (single model call):**
 - For images, the server calls Ollama Chat with an `images: [base64]` attachment and a prompt that returns 3 markdown sections:

@@ -1558,14 +1558,23 @@ const handleFilterPIIAny = async () => {
 
 // Handle PII filter - specific type
 const handleFilterPIIType = async (piiType) => {
+  console.log('handleFilterPIIType called with:', piiType)
+  console.log('Before toggle - activeFilters:', JSON.parse(JSON.stringify(activeFilters.value)))
+  
   activeFilters.value = activeFilters.value.filter(f => f.type !== 'pii_any')
   
   const existingIndex = activeFilters.value.findIndex(f => f.type === 'pii_type' && f.value === piiType)
+  console.log('existingIndex:', existingIndex)
+  
   if (existingIndex >= 0) {
+    console.log('Removing filter (toggle off)')
     activeFilters.value.splice(existingIndex, 1)
   } else {
+    console.log('Adding filter (toggle on)')
     activeFilters.value.push({ type: 'pii_type', value: piiType })
   }
+  
+  console.log('After toggle - activeFilters:', JSON.parse(JSON.stringify(activeFilters.value)))
   
   // Update URL
   const url = new URL(window.location)
@@ -1582,6 +1591,8 @@ const handleFilterPIIType = async (piiType) => {
       match: f.type === 'tag' || f.type === 'pii_type' ? { any: [f.value] } : { value: f.value }
     }))
   }
+  
+  console.log('PII Type filter - built filters:', JSON.stringify(filters, null, 2))
   
   await performFacetSearch(filters)
 }
@@ -1739,10 +1750,21 @@ const performSearch = async () => {
   } else if (activeFilters.value.length > 0) {
     // If we have active filters, refresh the filtered search
     const filters = {
-      must: activeFilters.value.map(f => ({
-        key: f.type === 'tag' ? 'tags' : f.type,
-        match: f.type === 'tag' ? { any: [f.value] } : { value: f.value }
-      }))
+      must: activeFilters.value.map(f => {
+        if (f.type === 'tag') {
+          return { key: 'tags', match: { any: [f.value] } }
+        } else if (f.type === 'pii_type') {
+          return { key: 'pii_types', match: { any: [f.value] } }
+        } else if (f.type === 'pii_risk') {
+          if (f.value === 'none') {
+            return { key: 'pii_detected', match: { value: false } }
+          } else {
+            return { key: 'pii_risk_level', match: { value: f.value } }
+          }
+        } else {
+          return { key: f.type, match: { value: f.value } }
+        }
+      })
     }
     await performFacetSearch(filters)
   }

@@ -22,6 +22,12 @@ function createSearchRoutes({
     try {
       const { query, limit = 10, offset = 0, filters, documentIds } = req.body;
 
+      console.log('=== SEMANTIC SEARCH START ===');
+      console.log('Query:', query);
+      console.log('Limit:', limit);
+      console.log('Offset:', offset);
+      console.log('Has filters:', !!filters);
+      
       // Debug: Log filters
       if (filters) {
         console.log('Semantic search filters:', JSON.stringify(filters, null, 2));
@@ -103,6 +109,7 @@ function createSearchRoutes({
               payload: p.payload
             }));
             totalEstimate = await countFilteredDocuments(qdrantClient, req.qdrantCollection, effectiveFilters);
+            console.log(`Semantic search with filters: found ${results.length} results, total estimate: ${totalEstimate}`);
           }
         } else {
           const scrollResults = await qdrantClient.scroll(req.qdrantCollection, scrollParams);
@@ -197,6 +204,10 @@ function createSearchRoutes({
         }
       }
 
+      console.log('=== SEMANTIC SEARCH END ===');
+      console.log('Returning results:', results.length);
+      console.log('Total estimate:', totalEstimate);
+
       res.json({
         query: query || '(filtered)',
         searchType: 'semantic',
@@ -214,12 +225,18 @@ function createSearchRoutes({
     try {
       const { query, limit = 10, offset = 0, denseWeight = 0.7, filters, documentIds } = req.body;
 
+      console.log('=== HYBRID SEARCH START ===');
+      console.log('Query:', query);
+      console.log('Limit:', limit);
+      console.log('Offset:', offset);
+      console.log('Has filters:', !!filters);
+
       // Debug: Log filters
       if (filters) {
-        // console.log('Hybrid search filters:', JSON.stringify(filters, null, 2));
+        console.log('Hybrid search filters:', JSON.stringify(filters, null, 2));
       }
       if (documentIds) {
-        // console.log('Hybrid search documentIds:', documentIds);
+        console.log('Hybrid search documentIds:', documentIds);
       }
 
       if (!query) {
@@ -362,14 +379,38 @@ function createSearchRoutes({
       } else {
         const results = await qdrantClient.search(req.qdrantCollection, searchParams);
 
-        // Get total count with filter (may be null if count fails/times out)
-        const totalEstimate = await countFilteredDocuments(qdrantClient, req.qdrantCollection, searchParams.filter);
+        console.log('Search returned:', results.length, 'results');
+        console.log('Filter being sent to countFilteredDocuments:', JSON.stringify(searchParams.filter, null, 2));
+
+        // For vector search with filters:
+        // - Count based on filter only (shows total in category/location/tag)
+        // - Query affects ranking/ordering, not total count
+        // - This allows proper pagination through filtered results
+        let totalEstimate;
+        if (searchParams.filter && searchParams.filter.must && searchParams.filter.must.length > 0) {
+          // Has filters - count by filter (query only affects ranking)
+          totalEstimate = await countFilteredDocuments(qdrantClient, req.qdrantCollection, searchParams.filter);
+          if (totalEstimate === null) {
+            totalEstimate = results.length; // Fallback if count fails
+          }
+          console.log('Using countFilteredDocuments for total (has filters, query affects ranking only)');
+        } else {
+          // No filters - count entire collection
+          totalEstimate = await countFilteredDocuments(qdrantClient, req.qdrantCollection, null);
+          if (totalEstimate === null) {
+            totalEstimate = results.length; // Fallback if count fails
+          }
+          console.log('Using countFilteredDocuments for total (no filters)');
+        }
+
+        console.log('=== HYBRID SEARCH END ===');
+        console.log('Total estimate:', totalEstimate);
 
         res.json({
           query,
           searchType: 'hybrid',
           denseWeight,
-          total: totalEstimate !== null ? totalEstimate : results.length, // Fallback to results length
+          total: totalEstimate,
           results: results.map(r => ({
             id: r.id,
             score: r.score,
